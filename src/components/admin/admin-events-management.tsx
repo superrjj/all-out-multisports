@@ -373,6 +373,8 @@ function Step1({
   eventTypesLoading,
   onAddEventType,
   onDeleteEventType,
+  newEventTypeName,
+  setNewEventTypeName,
 }: {
   form: EventFormState
   setForm: Dispatch<SetStateAction<EventFormState>>
@@ -386,6 +388,8 @@ function Step1({
   eventTypesLoading: boolean
   onAddEventType: () => void
   onDeleteEventType: (slug: string) => void
+  newEventTypeName: string
+  setNewEventTypeName: Dispatch<SetStateAction<string>>
 }) {
   return (
     <div className="space-y-6">
@@ -473,7 +477,13 @@ function Step1({
                     )
                   })}
                 </div>
-                <div className="flex justify-end">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <input
+                    value={newEventTypeName}
+                    onChange={(e) => setNewEventTypeName(e.target.value)}
+                    placeholder="New event type name"
+                    className="h-9 min-w-[220px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
                   <button
                     type="button"
                     onClick={() => onAddEventType()}
@@ -1233,6 +1243,7 @@ function CreateEventModal({
     ),
     registration_fee: String(initialEvent?.registration_fee ?? '0'),
   })
+  const [newEventTypeName, setNewEventTypeName] = useState('')
   const [eventTypes, setEventTypes] = useState<EventType[]>([])
   const [eventTypesLoading, setEventTypesLoading] = useState(true)
 
@@ -1263,8 +1274,7 @@ function CreateEventModal({
   }, [])
 
   const handleAddEventType = async () => {
-    const nameRaw = window.prompt('Enter new event type (e.g., Criterium / ITT / Road Race):')
-    const name = String(nameRaw ?? '').trim()
+    const name = String(newEventTypeName ?? '').trim()
     if (!name) return
 
     const slug = slugify(name)
@@ -1293,6 +1303,7 @@ function CreateEventModal({
         const next = [...new Set([...prev, slug])]
         return { ...v, race_types: next, race_type: next[0] ?? slug }
       })
+      setNewEventTypeName('')
       toast.success('Event type added.')
     } catch (e) {
       toast.error((e as Error).message || 'Failed to add event type.')
@@ -1304,7 +1315,6 @@ function CreateEventModal({
   const handleDeleteEventType = async (slug: string) => {
     const s = String(slug ?? '').trim()
     if (!s) return
-    if (!window.confirm(`Deactivate event type "${s}"?`)) return
     setEventTypesLoading(true)
     try {
       const { error } = await supabase
@@ -1629,6 +1639,8 @@ function CreateEventModal({
               eventTypesLoading={eventTypesLoading}
               onAddEventType={handleAddEventType}
               onDeleteEventType={(slug) => { void handleDeleteEventType(slug) }}
+              newEventTypeName={newEventTypeName}
+              setNewEventTypeName={setNewEventTypeName}
             />
           )}
           {step === 2 && (
