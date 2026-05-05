@@ -78,7 +78,12 @@ function slugify(value: string) {
 function combineDateAndTime(dateValue: string, timeValue?: string) {
   if (!dateValue) return null
   const finalTime = timeValue && timeValue.trim().length > 0 ? timeValue : '00:00'
-  return new Date(`${dateValue}T${finalTime}:00`).toISOString()
+  const [y, m, d] = dateValue.split('-').map((p) => Number.parseInt(p, 10))
+  const [hh, mm] = finalTime.split(':').map((p) => Number.parseInt(p, 10))
+  if (![y, m, d, hh, mm].every(Number.isFinite)) return null
+  // Inputs are PH local date/time (Asia/Manila, UTC+8). Convert to UTC ISO for storage.
+  const utcMillis = Date.UTC(y, (m || 1) - 1, d || 1, (hh || 0) - 8, mm || 0, 0)
+  return new Date(utcMillis).toISOString()
 }
 
 async function uploadToBucket(bucket: string, file: File | null) {
@@ -99,23 +104,46 @@ function formatTime(value: unknown) {
 
 function toDateInputValue(value: unknown) {
   if (!value) return ''
-  const date = new Date(String(value))
+  const raw = String(value).trim()
+  const isoLike = raw.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (isoLike && !raw.includes('T')) return isoLike[1]
+  const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toISOString().slice(0, 10)
+  // Render using PH timezone to avoid date shifting on edit.
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  const y = shifted.getUTCFullYear()
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 function toTimeInputValue(value: unknown) {
   if (!value) return ''
-  const date = new Date(String(value))
+  const raw = String(value).trim()
+  const isoLike = raw.match(/T(\d{2}:\d{2})/)
+  if (isoLike && !/[zZ]|[+-]\d{2}:\d{2}$/.test(raw)) return isoLike[1]
+  const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toISOString().slice(11, 16)
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  const hh = String(shifted.getUTCHours()).padStart(2, '0')
+  const mm = String(shifted.getUTCMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
 }
 
 function toDateTimeLocalValue(value: unknown) {
   if (!value) return ''
-  const date = new Date(String(value))
+  const raw = String(value).trim()
+  const isoLike = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+  if (isoLike && !/[zZ]|[+-]\d{2}:\d{2}$/.test(raw)) return `${isoLike[1]}T${isoLike[2]}`
+  const date = new Date(raw)
   if (Number.isNaN(date.getTime())) return ''
-  return `${date.toISOString().slice(0, 10)}T${date.toISOString().slice(11, 16)}`
+  const shifted = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  const y = shifted.getUTCFullYear()
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getUTCDate()).padStart(2, '0')
+  const hh = String(shifted.getUTCHours()).padStart(2, '0')
+  const mm = String(shifted.getUTCMinutes()).padStart(2, '0')
+  return `${y}-${m}-${d}T${hh}:${mm}`
 }
 
 /** Venue is saved as "Place, City" when city is set — split for editing. */
@@ -1380,7 +1408,10 @@ function CreateEventModal({
         const eventTimestamp = combineDateAndTime(form.event_date, form.start_time)
         const defaultDeadline = combineDateAndTime(form.event_date, '23:59')
         const deadlineTimestamp = form.registration_deadline
-          ? new Date(form.registration_deadline).toISOString()
+          ? combineDateAndTime(
+              form.registration_deadline.slice(0, 10),
+              form.registration_deadline.slice(11, 16),
+            )
           : defaultDeadline
 
         if (!eventTimestamp || !deadlineTimestamp) {
