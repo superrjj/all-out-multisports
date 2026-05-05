@@ -21,6 +21,7 @@ interface EventFormState {
   venue: string
   city: string
   event_date: string
+  end_date: string
   start_time: string
   end_time: string
   google_maps_link: string
@@ -481,10 +482,19 @@ function Step1({
 
       <div>
         <p className="mb-3 text-sm font-semibold text-slate-800">Date, Time & Location</p>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <label>
-            <p className="mb-1 text-xs font-medium text-slate-600">Event Date <span className="text-red-500">*</span></p>
+            <p className="mb-1 text-xs font-medium text-slate-600">Start Date <span className="text-red-500">*</span></p>
             <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" type="date" value={form.event_date} onChange={(e) => setForm((v) => ({ ...v, event_date: e.target.value }))} />
+          </label>
+          <label>
+            <p className="mb-1 text-xs font-medium text-slate-600">End Date (Optional)</p>
+            <input
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              type="date"
+              value={form.end_date}
+              onChange={(e) => setForm((v) => ({ ...v, end_date: e.target.value }))}
+            />
           </label>
           <label>
             <p className="mb-1 text-xs font-medium text-slate-600">Start Time <span className="text-red-500">*</span></p>
@@ -494,7 +504,7 @@ function Step1({
             <p className="mb-1 text-xs font-medium text-slate-600">End Time <span className="text-red-500">*</span></p>
             <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" type="time" value={form.end_time} onChange={(e) => setForm((v) => ({ ...v, end_time: e.target.value }))} />
           </label>
-          <label className="md:col-span-2">
+          <label className="md:col-span-3">
             <p className="mb-1 text-xs font-medium text-slate-600">Venue / Location <span className="text-red-500">*</span></p>
             <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="Enter venue or location" value={form.venue} onChange={(e) => setForm((v) => ({ ...v, venue: e.target.value }))} />
           </label>
@@ -513,12 +523,12 @@ function Step1({
               currentUrl={currentRouteMapUrl}
             />
           </label>
-          <label className="md:col-span-2">
+          <label className="md:col-span-3">
             <p className="mb-1 text-xs font-medium text-slate-600">Google Maps Link (Optional)</p>
             <input className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="https://maps.google.com/..." value={form.google_maps_link} onChange={(e) => setForm((v) => ({ ...v, google_maps_link: e.target.value }))} />
             <p className="mt-0.5 text-[10px] text-slate-400">Paste a Google Maps link for your event venue or route.</p>
           </label>
-          <label className="md:col-span-2">
+          <label className="md:col-span-3">
             <p className="mb-1 text-xs font-medium text-slate-600">Registration Deadline <span className="text-red-500">*</span></p>
             <input
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -1023,7 +1033,7 @@ function Step4({
           </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs flex-1">
             <div className="col-span-2 sm:col-span-1"><p className="text-slate-500">Event Types</p><p className="font-medium text-slate-800">{raceTypeLabels}</p></div>
-              <div><p className="text-slate-500">Date & Start — End</p><p className="font-medium text-slate-800">{form.event_date ? `${form.event_date} · ${form.start_time || '—'} — ${form.end_time || '—'}` : '—'}</p></div>
+              <div><p className="text-slate-500">Start — End</p><p className="font-medium text-slate-800">{form.event_date ? `${form.event_date} ${form.start_time || '—'} → ${(form.end_date || form.event_date)} ${form.end_time || '—'}` : '—'}</p></div>
             <div><p className="text-slate-500">Venue</p><p className="font-medium text-slate-800">{form.venue ? (form.city ? `${form.venue}, ${form.city}` : form.venue) : '—'}</p></div>
               <div><p className="text-slate-500">Registration Deadline</p><p className="font-medium text-slate-800">{form.registration_deadline || '—'}</p></div>
             <div><p className="text-slate-500">Registration Fee</p><p className="font-medium text-slate-800">PHP {Number(form.registration_fee || 0).toLocaleString()}</p></div>
@@ -1182,6 +1192,8 @@ function CreateEventModal({
     venue: initialVenueParts.venue,
     city: initialVenueParts.city,
     event_date: toDateInputValue(initialEvent?.event_date),
+    // FIX: was incorrectly using end_time instead of end_date
+    end_date: toDateInputValue(initialEvent?.end_date),
     start_time: toTimeInputValue(initialEvent?.start_time),
     end_time: toTimeInputValue(initialEvent?.end_time),
     google_maps_link: String(initialEvent?.google_maps_link ?? ''),
@@ -1368,6 +1380,8 @@ function CreateEventModal({
         venue: venueParts.venue,
         city: venueParts.city,
         event_date: toDateInputValue(row.event_date),
+        // FIX: was incorrectly using row.end_time instead of row.end_date
+        end_date: toDateInputValue(row.end_date),
         start_time: toTimeInputValue(row.start_time),
         end_time: toTimeInputValue(row.end_time),
         google_maps_link: String(row.google_maps_link ?? ''),
@@ -1436,7 +1450,7 @@ function CreateEventModal({
         )
 
         const endTimestamp =
-          form.end_time?.trim() ? combineDateAndTime(form.event_date, form.end_time) : null
+          form.end_time?.trim() ? combineDateAndTime(form.end_date || form.event_date, form.end_time) : null
         const mapsLink = form.google_maps_link.trim()
         const orgWebsite = extra.orgWebsite.trim()
 
@@ -1447,6 +1461,8 @@ function CreateEventModal({
           venue: form.city ? `${form.venue.trim()}, ${form.city.trim()}` : form.venue.trim(),
           route_map_url: routeMapUrl,
           event_date: eventTimestamp,
+          // FIX: persist end_date as a plain date string
+          end_date: form.end_date || null,
           registration_deadline: deadlineTimestamp,
           registration_fee: Number(form.registration_fee || 0),
           prize_pool:
