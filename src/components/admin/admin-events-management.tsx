@@ -1611,6 +1611,50 @@ function parseCategoryRiderLimit(raw: unknown): number {
   return Math.floor(n)
 }
 
+function normalizeCategoryKeyPart(raw: unknown): string {
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function latestPaidRegistrationIdsFromOrders(
+  orders: Array<{ registration_id?: string | null; status?: string | null }>,
+): Set<string> {
+  const latestStatusByReg = new Map<string, string>()
+  for (const row of orders) {
+    const regId = String(row.registration_id ?? '').trim()
+    if (!regId || latestStatusByReg.has(regId)) continue
+    latestStatusByReg.set(regId, String(row.status ?? '').toLowerCase())
+  }
+  const paidRegIds = new Set<string>()
+  for (const [regId, status] of latestStatusByReg.entries()) {
+    if (status === 'paid') paidRegIds.add(regId)
+  }
+  return paidRegIds
+}
+
+function addBundleFallbackPaidRegistrationIds(args: {
+  regRows: Array<{ id?: string | null; checkout_bundle_id?: string | null }>
+  directPaidRegIds: Set<string>
+  bundleOrders: Array<{ checkout_bundle_id?: string | null; status?: string | null }>
+}): Set<string> {
+  const out = new Set<string>(args.directPaidRegIds)
+  const latestStatusByBundle = new Map<string, string>()
+  for (const row of args.bundleOrders) {
+    const bid = String(row.checkout_bundle_id ?? '').trim()
+    if (!bid || latestStatusByBundle.has(bid)) continue
+    latestStatusByBundle.set(bid, String(row.status ?? '').toLowerCase())
+  }
+  for (const row of args.regRows) {
+    const regId = String(row.id ?? '').trim()
+    const bid = String(row.checkout_bundle_id ?? '').trim()
+    if (!regId || !bid || out.has(regId)) continue
+    if (latestStatusByBundle.get(bid) === 'paid') out.add(regId)
+  }
+  return out
+}
+
 function EventCategoriesRegistrationModal({
   open,
   onClose,
@@ -1646,18 +1690,95 @@ function EventCategoriesRegistrationModal({
             .order('category_name', { ascending: true }),
           supabase
             .from('registration_forms')
-            .select('race_category_id')
+            .select('id, race_category_id, checkout_bundle_id')
             .eq('event_id', eventId)
-            .eq('status', 'confirmed'),
+            .order('created_at', { ascending: false }),
         ])
         if (catErr) throw catErr
         if (regErr) throw regErr
 
+        const regIds = (regs ?? [])
+          .map((row) => String((row as { id?: string | null }).id ?? '').trim())
+          .filter(Boolean)
+        const { data: orderRows, error: orderErr } =
+          regIds.length > 0
+            ? await supabase
+                .from('payment_orders')
+                .select('registration_id, status, created_at')
+                .in('registration_id', regIds)
+                .order('created_at', { ascending: false })
+            : { data: [], error: null }
+        if (orderErr) throw orderErr
+        const paidRegIdsDirect = latestPaidRegistrationIdsFromOrders(
+          (orderRows ?? []) as Array<{ registration_id?: string | null; status?: string | null }>,
+        )
+        const bundleIds = Array.from(
+          new Set(
+            (regs ?? [])
+              .map((row) => String((row as { checkout_bundle_id?: string | null }).checkout_bundle_id ?? '').trim())
+              .filter(Boolean),
+          ),
+        )
+        const { data: bundleOrders, error: bundleErr } =
+          bundleIds.length > 0
+            ? await supabase
+                .from('payment_orders')
+                .select('checkout_bundle_id, status, created_at')
+                .in('checkout_bundle_id', bundleIds)
+                .order('created_at', { ascending: false })
+            : { data: [], error: null }
+        if (bundleErr) throw bundleErr
+        const paidRegIds = addBundleFallbackPaidRegistrationIds({
+          regRows: (regs ?? []) as Array<{ id?: string | null; checkout_bundle_id?: string | null }>,
+          directPaidRegIds: paidRegIdsDirect,
+          bundleOrders: (bundleOrders ?? []) as Array<{ checkout_bundle_id?: string | null; status?: string | null }>,
+        })
+
+        const { data: riderRows, error: riderErr } =
+          regIds.length > 0
+            ? await supabase
+                .from('registration_rider_details')
+                .select('registration_id, discipline, age_category')
+                .in('registration_id', regIds)
+            : { data: [], error: null }
+        if (riderErr) throw riderErr
+
+        const riderByRegId = new Map<string, { discipline: string; age_category: string }>()
+        for (const row of riderRows ?? []) {
+          const rid = String((row as { registration_id?: string | null }).registration_id ?? '').trim()
+          if (!rid) continue
+          riderByRegId.set(rid, {
+            discipline: String((row as { discipline?: string | null }).discipline ?? ''),
+            age_category: String((row as { age_category?: string | null }).age_category ?? ''),
+          })
+        }
+
+        const categoryIdByNormalizedPair = new Map<string, string>()
+        for (const c of cats ?? []) {
+          const cid = String((c as { id?: string }).id ?? '').trim()
+          if (!cid) continue
+          const discipline = normalizeCategoryKeyPart((c as { discipline?: string }).discipline)
+          const categoryName = normalizeCategoryKeyPart((c as { category_name?: string }).category_name)
+          if (!discipline || !categoryName) continue
+          categoryIdByNormalizedPair.set(`${discipline}||${categoryName}`, cid)
+        }
+
         const countByCategory = new Map<string, number>()
         for (const row of regs ?? []) {
-          const cid = String((row as { race_category_id?: string | null }).race_category_id ?? '')
-          if (!cid) continue
-          countByCategory.set(cid, (countByCategory.get(cid) ?? 0) + 1)
+          const rid = String((row as { id?: string | null }).id ?? '').trim()
+          if (!rid || !paidRegIds.has(rid)) continue
+          const directCid = String((row as { race_category_id?: string | null }).race_category_id ?? '').trim()
+          let resolvedCategoryId = directCid
+          if (!resolvedCategoryId) {
+            const rider = riderByRegId.get(rid)
+            const riderDiscipline = normalizeCategoryKeyPart(rider?.discipline ?? '')
+            const riderAgeCategory = normalizeCategoryKeyPart(rider?.age_category ?? '')
+            if (riderDiscipline && riderAgeCategory) {
+              resolvedCategoryId = categoryIdByNormalizedPair.get(`${riderDiscipline}||${riderAgeCategory}`) ?? ''
+            }
+          }
+          if (!resolvedCategoryId) continue
+          countByCategory.set(resolvedCategoryId, (countByCategory.get(resolvedCategoryId) ?? 0) + 1)
         }
 
         if (cancelled) return
@@ -1710,8 +1831,8 @@ function EventCategoriesRegistrationModal({
               {eventTitle}
             </h2>
             <p className="mt-1 text-xs text-slate-600">
-              Paid registrations are counted when registration status is <span className="font-medium">confirmed</span>.
-              Fill % uses each category&apos;s rider limit from event setup.
+              Paid registrations are counted from the latest payment order status (
+              <span className="font-medium">payment_orders.status = paid</span>). Fill % uses each category&apos;s rider limit from event setup.
             </p>
           </div>
           <button
@@ -1730,7 +1851,7 @@ function EventCategoriesRegistrationModal({
               <UserCheck className="mx-auto h-10 w-10 text-slate-300" />
               <p className="mt-2 text-sm font-semibold text-slate-800">No registrations yet</p>
               <p className="mt-1 text-xs text-slate-600">
-                There are no confirmed (paid) registrations for this event. Category limits below are shown for planning;
+                There are no paid registrations for this event yet. Category limits below are shown for planning;
                 counts update automatically after riders complete payment.
               </p>
             </div>
@@ -2066,22 +2187,61 @@ export function AdminEventsManagement() {
     }
     let cancelled = false
     void (async () => {
-      const counts: Record<string, number> = {}
-      await Promise.all(
-        ids.map(async (eid) => {
-          const { count, error: err } = await supabase
-            .from('registration_forms')
-            .select('*', { count: 'exact', head: true })
-            .eq('event_id', eid)
-            .eq('status', 'confirmed')
-          if (err) {
-            counts[eid] = 0
-            return
-          }
-          counts[eid] = typeof count === 'number' && Number.isFinite(count) ? count : 0
-        }),
-      )
-      if (!cancelled) setPaidCountByEventId(counts)
+      try {
+        const { data: regs, error: regErr } = await supabase
+          .from('registration_forms')
+          .select('id, event_id, checkout_bundle_id')
+          .in('event_id', ids)
+        if (regErr) throw regErr
+
+        const regRows = (regs ?? []) as Array<{ id?: string | null; event_id?: string | null; checkout_bundle_id?: string | null }>
+        const regIds = regRows.map((r) => String(r.id ?? '').trim()).filter(Boolean)
+
+        const { data: orders, error: orderErr } =
+          regIds.length > 0
+            ? await supabase
+                .from('payment_orders')
+                .select('registration_id, status, created_at')
+                .in('registration_id', regIds)
+                .order('created_at', { ascending: false })
+            : { data: [], error: null }
+        if (orderErr) throw orderErr
+
+        const paidRegIdsDirect = latestPaidRegistrationIdsFromOrders(
+          (orders ?? []) as Array<{ registration_id?: string | null; status?: string | null }>,
+        )
+        const bundleIds = Array.from(
+          new Set(regRows.map((r) => String(r.checkout_bundle_id ?? '').trim()).filter(Boolean)),
+        )
+        const { data: bundleOrders, error: bundleErr } =
+          bundleIds.length > 0
+            ? await supabase
+                .from('payment_orders')
+                .select('checkout_bundle_id, status, created_at')
+                .in('checkout_bundle_id', bundleIds)
+                .order('created_at', { ascending: false })
+            : { data: [], error: null }
+        if (bundleErr) throw bundleErr
+        const paidRegIds = addBundleFallbackPaidRegistrationIds({
+          regRows,
+          directPaidRegIds: paidRegIdsDirect,
+          bundleOrders: (bundleOrders ?? []) as Array<{ checkout_bundle_id?: string | null; status?: string | null }>,
+        })
+
+        const counts: Record<string, number> = {}
+        for (const eid of ids) counts[eid] = 0
+        for (const row of regRows) {
+          const regId = String(row.id ?? '').trim()
+          const eid = String(row.event_id ?? '').trim()
+          if (!regId || !eid || !paidRegIds.has(regId)) continue
+          counts[eid] = (counts[eid] ?? 0) + 1
+        }
+        if (!cancelled) setPaidCountByEventId(counts)
+      } catch {
+        const fallback: Record<string, number> = {}
+        for (const eid of ids) fallback[eid] = 0
+        if (!cancelled) setPaidCountByEventId(fallback)
+      }
     })()
     return () => {
       cancelled = true
