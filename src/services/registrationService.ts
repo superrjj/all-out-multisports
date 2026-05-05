@@ -531,7 +531,7 @@ export const registrationService = {
     const { data: registration, error: registrationError } = await supabase
       .from('registration_forms')
       .select(
-        'id, event_id, race_category_id, bib_number, registrant_email, status, entry_event_type_label, checkout_bundle_id',
+        'id, event_id, race_category_id, bib_number, registrant_email, status, entry_event_type_slug, entry_event_type_label, checkout_bundle_id',
       )
       .eq('id', registrationId)
       .maybeSingle()
@@ -611,7 +611,7 @@ export const registrationService = {
       String(registration.status ?? '').toLowerCase() === 'confirmed'
     const bibNumber = rawBib
     const verificationId = bibNumber
-      ? `REG-${new Date().getFullYear()}-${bibNumber.padStart(5, '0')}`
+      ? `REG-${new Date().getFullYear()}-${bibNumber}`
       : `REG-${new Date().getFullYear()}-${registration.id.replace(/-/g, '').slice(0, 10)}`
     const verificationToken = getStableVerificationToken({
       registrationId: registration.id,
@@ -619,7 +619,17 @@ export const registrationService = {
       paymentTxId: txId,
       bibNumber,
     })
-    const qrPayload = `BIB:${bibNumber}|REG:${verificationId}|EVT:${String(event?.id ?? registration.event_id ?? '')}`
+    const qrPayload = JSON.stringify({
+      version: 2,
+      type: 'registration_qr',
+      bib_number: bibNumber,
+      verification_id: verificationId,
+      event_id: String(event?.id ?? registration.event_id ?? ''),
+      registration_id: registration.id,
+      event_type_slug: String(registration.entry_event_type_slug ?? '').trim() || null,
+      event_type_label: String(registration.entry_event_type_label ?? '').trim() || null,
+      category_code: categoryCode || null,
+    })
 
     return {
       registrationId: registration.id,

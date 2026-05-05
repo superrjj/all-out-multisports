@@ -12,18 +12,50 @@ export function extractBibSequenceByPrefix(bibNumber: string, prefix: string) {
   return Number.isFinite(n) ? n : 0
 }
 
+function fallbackEventTypeCodeFromSlug(slug: string): string {
+  const s = String(slug ?? '').trim().toLowerCase()
+  if (s === 'criterium') return '1'
+  if (s === 'itt') return '2'
+  if (s === 'road_race' || s === 'road-race' || s === 'road race') return '3'
+  // Keep a deterministic fallback so bibs can still be assigned if event_types row is incomplete.
+  return '9'
+}
+
+function parseEventTypeSlugs(raw: unknown): string[] {
+  return String(raw ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+}
+
 /** Assign bib for one registration if missing; registration should already be status confirmed when paid. */
 export async function assignBibIfMissing(supabase: SupabaseClient, registrationId: string) {
   const now = new Date().toISOString()
   const { data: registration, error: registrationError } = await supabase
     .from('registration_forms')
-    .select('id, race_category_id, bib_number')
+    .select('id, event_id, race_category_id, bib_number, entry_event_type_slug')
     .eq('id', registrationId)
     .maybeSingle()
   if (registrationError) throw registrationError
   if (!registration?.id) throw new Error('Registration not found while assigning bib.')
   if (String(registration.bib_number ?? '').trim()) return
   if (!registration.race_category_id) throw new Error('Missing race category for registration.')
+  let eventTypeSlug = String(registration.entry_event_type_slug ?? '').trim().toLowerCase()
+  if (!eventTypeSlug && registration.event_id) {
+    // Legacy fallback: for older rows that do not store entry_event_type_slug,
+    // infer from event.race_type only when event has exactly one configured type.
+    const { data: eventRow, error: eventErr } = await supabase
+      .from('events')
+      .select('race_type')
+      .eq('id', registration.event_id)
+      .maybeSingle()
+    if (eventErr) throw eventErr
+    const slugs = parseEventTypeSlugs(eventRow?.race_type)
+    if (slugs.length === 1) eventTypeSlug = slugs[0]
+  }
+  if (!eventTypeSlug) {
+    throw new Error('Missing entry_event_type_slug for registration (and could not infer from event.race_type).')
+  }
 
   const { data: raceCategory, error: raceCategoryError } = await supabase
     .from('race_categories')
@@ -34,10 +66,22 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   const categoryCode = String(raceCategory?.code ?? '').trim()
   if (!categoryCode) throw new Error('Missing category code for registration category.')
 
+  const { data: eventTypeRow, error: eventTypeError } = await supabase
+    .from('event_types')
+    .select('event_code')
+    .eq('slug', eventTypeSlug)
+    .maybeSingle()
+  if (eventTypeError) throw eventTypeError
+  const eventTypeCodeRaw = String(eventTypeRow?.event_code ?? '').trim()
+  const eventTypeCode = eventTypeCodeRaw || fallbackEventTypeCodeFromSlug(eventTypeSlug)
+  const bibPrefix = `${eventTypeCode}${categoryCode}`
+
   const { data: existingBibs, error: bibError } = await supabase
     .from('registration_forms')
     .select('bib_number')
+    .eq('event_id', registration.event_id)
     .eq('race_category_id', registration.race_category_id)
+    .eq('entry_event_type_slug', eventTypeSlug)
     .eq('status', 'confirmed')
     .not('bib_number', 'is', null)
     .order('created_at', { ascending: true })
@@ -45,7 +89,7 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   if (bibError) throw bibError
 
   const maxSequence = (existingBibs ?? []).reduce((max: number, row: { bib_number: string }) => {
-    const seq = extractBibSequenceByPrefix(row.bib_number, categoryCode)
+    const seq = extractBibSequenceByPrefix(row.bib_number, bibPrefix)
     return seq > max ? seq : max
   }, 0)
   const nextSequence = maxSequence + 1
@@ -56,9 +100,9 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
     )
   }
   if (nextSequence > 99) {
-    throw new Error(`Category bib sequence exceeded 2 digits for category code ${categoryCode}.`)
+    throw new Error(`Category bib sequence exceeded 2 digits for prefix ${bibPrefix}.`)
   }
-  const nextBib = `${categoryCode}${String(nextSequence).padStart(2, '0')}`
+  const nextBib = `${bibPrefix}${String(nextSequence).padStart(2, '0')}`
 
   const { error: updateError } = await supabase
     .from('registration_forms')

@@ -64,8 +64,13 @@ function extractBibFromCode(code: string) {
   // New certificates encode a JSON payload.
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {
-      const parsed = JSON.parse(trimmed) as { bib_number?: unknown; bibNumber?: unknown }
-      const payloadBib = String(parsed.bib_number ?? parsed.bibNumber ?? '').trim()
+      const parsed = JSON.parse(trimmed) as {
+        bib_number?: unknown
+        bibNumber?: unknown
+        bib?: unknown
+        code?: unknown
+      }
+      const payloadBib = String(parsed.bib_number ?? parsed.bibNumber ?? parsed.bib ?? parsed.code ?? '').trim()
       if (payloadBib) return payloadBib
     } catch {
       // Fall back to legacy formats below.

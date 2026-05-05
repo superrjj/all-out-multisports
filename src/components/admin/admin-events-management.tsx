@@ -64,6 +64,7 @@ interface EventType {
   slug: string
   name: string
   active: boolean
+  event_code?: string | null
 }
 
 function slugify(value: string) {
@@ -180,6 +181,18 @@ function parsePrizePoolFields(prizePool: unknown): { totalPrize: string; prizeDe
     return { totalPrize: rest, prizeDesc: '' }
   }
   return { totalPrize: '', prizeDesc: ppStr }
+}
+
+function pickNextEventTypeCode(rows: Array<{ event_code?: string | null }>): string {
+  const used = new Set<number>()
+  for (const row of rows) {
+    const n = Number.parseInt(String(row.event_code ?? '').trim(), 10)
+    if (Number.isFinite(n) && n > 0) used.add(n)
+  }
+  for (let n = 1; n <= 999; n += 1) {
+    if (!used.has(n)) return String(n)
+  }
+  throw new Error('No available event code left (1-999).')
 }
 
 // ─── Step indicator ──────────────────────────────────────────────────────────
@@ -359,6 +372,7 @@ function Step1({
   eventTypes,
   eventTypesLoading,
   onAddEventType,
+  onDeleteEventType,
 }: {
   form: EventFormState
   setForm: Dispatch<SetStateAction<EventFormState>>
@@ -371,6 +385,7 @@ function Step1({
   eventTypes: EventType[]
   eventTypesLoading: boolean
   onAddEventType: () => void
+  onDeleteEventType: (slug: string) => void
 }) {
   return (
     <div className="space-y-6">
@@ -438,6 +453,22 @@ function Step1({
                           ✓
                         </span>
                         <span className="whitespace-nowrap">{t.name}</span>
+                        <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">
+                          Code: {String(t.event_code ?? '—')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            onDeleteEventType(t.slug)
+                          }}
+                          className="ml-1 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-rose-600"
+                          title={`Remove ${t.name}`}
+                          aria-label={`Remove ${t.name}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </label>
                     )
                   })}
@@ -1210,7 +1241,7 @@ function CreateEventModal({
     try {
       const { data, error } = await supabase
         .from('event_types')
-        .select('slug, name, active')
+        .select('slug, name, active, event_code')
         .eq('active', true)
         .order('name', { ascending: true })
 
@@ -1244,8 +1275,14 @@ function CreateEventModal({
 
     setEventTypesLoading(true)
     try {
+      const { data: existingCodes, error: listErr } = await supabase
+        .from('event_types')
+        .select('event_code')
+      if (listErr) throw listErr
+      const eventCode = pickNextEventTypeCode((existingCodes ?? []) as Array<{ event_code?: string | null }>)
+
       const { error } = await supabase.from('event_types').upsert(
-        { name, slug, active: true },
+        { name, slug, active: true, event_code: eventCode },
         { onConflict: 'slug' },
       )
       if (error) throw error
@@ -1259,6 +1296,30 @@ function CreateEventModal({
       toast.success('Event type added.')
     } catch (e) {
       toast.error((e as Error).message || 'Failed to add event type.')
+    } finally {
+      setEventTypesLoading(false)
+    }
+  }
+
+  const handleDeleteEventType = async (slug: string) => {
+    const s = String(slug ?? '').trim()
+    if (!s) return
+    if (!window.confirm(`Deactivate event type "${s}"?`)) return
+    setEventTypesLoading(true)
+    try {
+      const { error } = await supabase
+        .from('event_types')
+        .update({ active: false })
+        .eq('slug', s)
+      if (error) throw error
+      setForm((v) => {
+        const next = (Array.isArray(v.race_types) ? v.race_types : []).filter((x) => x !== s)
+        return { ...v, race_types: next, race_type: next[0] ?? '' }
+      })
+      await loadEventTypes()
+      toast.success('Event type removed from active list.')
+    } catch (e) {
+      toast.error((e as Error).message || 'Failed to remove event type.')
     } finally {
       setEventTypesLoading(false)
     }
@@ -1567,6 +1628,7 @@ function CreateEventModal({
               eventTypes={eventTypes}
               eventTypesLoading={eventTypesLoading}
               onAddEventType={handleAddEventType}
+              onDeleteEventType={(slug) => { void handleDeleteEventType(slug) }}
             />
           )}
           {step === 2 && (
