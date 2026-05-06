@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { adminModulesApi } from '../../services/adminModulesApi'
-import { ModuleShell, SectionCard, formatDate, useModuleLoader } from './admin-module-shared'
+import { ModuleShell, SectionCard, formatDateTime, useModuleLoader } from './admin-module-shared'
 
 type ScannerControls = {
   stop: () => void
@@ -724,7 +724,7 @@ export function AdminQrCheckIn() {
                         {formatScanStatusLabel(row.scan_status)}
                       </span>
                     </td>
-                    <td className="px-2 py-2 text-slate-700 sm:px-3">{formatDate(row.scanned_at)}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-slate-700 sm:px-3">{formatDateTime(row.scanned_at)}</td>
                   </tr>
                 ))}
               </tbody>

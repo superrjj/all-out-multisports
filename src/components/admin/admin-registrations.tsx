@@ -2,7 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, Copy, Printer, Search, ShieldX, Users } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Printer, Search, ShieldX, Users, X } from 'lucide-react'
+
+function formatEventTypeSlugLabel(slug: string | null | undefined) {
+  const raw = String(slug ?? '').trim()
+  if (!raw) return '—'
+  return raw
+    .split(/[,_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
 
 function pill(status: string) {
   const s = status.toLowerCase()
@@ -36,6 +46,25 @@ function SkeletonRow() {
   )
 }
 
+type BibLedgerRow = {
+  id: string
+  race_category_id: string | null
+  entry_event_type_slug: string | null
+  bib_class_code: number | string | null
+  created_at: string | null
+}
+
+type LedgerCategoryRow = {
+  id: string
+  discipline: string | null
+  category_name: string | null
+}
+
+type EventTypeRow = {
+  slug: string
+  name: string
+}
+
 export function AdminRegistrations() {
   const PAGE_SIZE = 50
   const [rows, setRows] = useState<AdminRegistrationRow[]>([])
@@ -48,6 +77,15 @@ export function AdminRegistrations() {
   const [sortBy, setSortBy] = useState<'created_desc' | 'created_asc' | 'cyclist_asc' | 'cyclist_desc'>('created_desc')
   const [page, setPage] = useState(1)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [ledgerOpen, setLedgerOpen] = useState(false)
+  const [ledgerEventId, setLedgerEventId] = useState('')
+  const [ledgerDiscipline, setLedgerDiscipline] = useState('all')
+  const [ledgerCategoryId, setLedgerCategoryId] = useState('all')
+  const [ledgerCategories, setLedgerCategories] = useState<LedgerCategoryRow[]>([])
+  const [ledgerEventTypes, setLedgerEventTypes] = useState<EventTypeRow[]>([])
+  const [ledgerRows, setLedgerRows] = useState<BibLedgerRow[]>([])
+  const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [ledgerError, setLedgerError] = useState('')
 
   function fetchData() {
     return adminApi
@@ -70,20 +108,12 @@ export function AdminRegistrations() {
 
     const channel = supabase
       .channel('admin-registrations-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'registration_forms' }, () => {
-        void fetchData()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_orders' }, () => {
-        void fetchData()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, () => {
-        void fetchData()
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'registration_forms' }, () => { void fetchData() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_orders' }, () => { void fetchData() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_transactions' }, () => { void fetchData() })
       .subscribe()
 
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    return () => { void supabase.removeChannel(channel) }
   }, [])
 
   const raceOptions = useMemo(
@@ -93,6 +123,26 @@ export function AdminRegistrations() {
   const categoryOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => String(r.age_category ?? '').trim()).filter(Boolean))),
     [rows],
+  )
+  const ledgerEventOptions = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const row of rows) {
+      const id = String(row.event_id ?? '').trim()
+      if (!id) continue
+      if (!byId.has(id)) byId.set(id, String(row.event_title ?? row.race_type ?? id))
+    }
+    return Array.from(byId.entries()).map(([id, title]) => ({ id, title }))
+  }, [rows])
+  const ledgerDisciplineOptions = useMemo(
+    () => Array.from(new Set(ledgerCategories.map((c) => String(c.discipline ?? '').trim()).filter(Boolean))),
+    [ledgerCategories],
+  )
+  const ledgerCategoryOptions = useMemo(
+    () => ledgerCategories.filter((c) => {
+      if (ledgerDiscipline === 'all') return true
+      return String(c.discipline ?? '') === ledgerDiscipline
+    }),
+    [ledgerCategories, ledgerDiscipline],
   )
 
   const filtered = useMemo(() => {
@@ -105,11 +155,9 @@ export function AdminRegistrations() {
         String(r.race_type ?? '').toLowerCase().includes(query) ||
         String(r.age_category ?? '').toLowerCase().includes(query) ||
         String(r.payment_status ?? '').toLowerCase().includes(query)
-
       const matchesRace = raceFilter === 'all' || String(r.race_type ?? '') === raceFilter
       const matchesPayment = paymentFilter === 'all' || String(r.payment_status ?? '') === paymentFilter
       const matchesCategory = categoryFilter === 'all' || String(r.age_category ?? '') === categoryFilter
-
       return matchesSearch && matchesRace && matchesPayment && matchesCategory
     })
 
@@ -157,13 +205,88 @@ export function AdminRegistrations() {
     return [currentPage - 2, currentPage - 1, currentPage, currentPage + 1, currentPage + 2]
   }, [currentPage, totalPages])
 
-  useEffect(() => {
-    setPage(1)
-  }, [q, raceFilter, paymentFilter, categoryFilter, sortBy])
+  useEffect(() => { setPage(1) }, [q, raceFilter, paymentFilter, categoryFilter, sortBy])
+  useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
 
   useEffect(() => {
-    if (page > totalPages) setPage(totalPages)
-  }, [page, totalPages])
+    if (!ledgerOpen) return
+    if (ledgerEventId) return
+    const first = ledgerEventOptions[0]?.id ?? ''
+    if (first) setLedgerEventId(first)
+  }, [ledgerOpen, ledgerEventId, ledgerEventOptions])
+
+  useEffect(() => {
+    if (!ledgerOpen || !ledgerEventId) return
+    let active = true
+    void (async () => {
+      try {
+        const { data, error: qErr } = await supabase
+          .from('race_categories')
+          .select('id, discipline, category_name')
+          .eq('event_id', ledgerEventId)
+          .order('discipline', { ascending: true })
+          .order('category_name', { ascending: true })
+        if (!active) return
+        if (qErr) throw qErr
+        setLedgerCategories((data ?? []) as LedgerCategoryRow[])
+      } catch (e) {
+        if (!active) return
+        setLedgerError((e as Error).message || 'Failed to load event categories.')
+        setLedgerCategories([])
+      }
+    })()
+    return () => { active = false }
+  }, [ledgerOpen, ledgerEventId])
+
+  useEffect(() => {
+    if (!ledgerEventId) return
+    void supabase
+      .from('event_types')
+      .select('slug, name')
+      .then(({ data }) => setLedgerEventTypes((data ?? []) as EventTypeRow[]))
+  }, [ledgerEventId])
+
+  useEffect(() => {
+    if (!ledgerOpen || !ledgerEventId) return
+    let active = true
+    setLedgerLoading(true)
+    setLedgerError('')
+    void (async () => {
+      try {
+        let query = supabase
+          .from('event_race_bib_classes')
+          .select('id, race_category_id, entry_event_type_slug, bib_class_code, created_at')
+          .eq('event_id', ledgerEventId)
+          .order('entry_event_type_slug', { ascending: true })
+          .order('bib_class_code', { ascending: true })
+
+        if (ledgerCategoryId !== 'all') {
+          query = query.eq('race_category_id', ledgerCategoryId)
+        } else if (ledgerDiscipline !== 'all') {
+          const ids = ledgerCategoryOptions.map((c) => c.id)
+          if (ids.length === 0) {
+            if (!active) return
+            setLedgerRows([])
+            setLedgerLoading(false)
+            return
+          }
+          query = query.in('race_category_id', ids)
+        }
+
+        const { data, error: qErr } = await query
+        if (!active) return
+        if (qErr) throw qErr
+        setLedgerRows((data ?? []) as BibLedgerRow[])
+      } catch (e) {
+        if (!active) return
+        setLedgerError((e as Error).message || 'Failed to load category legend.')
+        setLedgerRows([])
+      } finally {
+        if (active) setLedgerLoading(false)
+      }
+    })()
+    return () => { active = false }
+  }, [ledgerOpen, ledgerEventId, ledgerDiscipline, ledgerCategoryId, ledgerCategoryOptions])
 
   return (
     <div className="space-y-4">
@@ -176,15 +299,23 @@ export function AdminRegistrations() {
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
               <Users className="h-3.5 w-3.5" />
-              Export Participants
+              Import Participants
             </button>
             <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
               <Printer className="h-3.5 w-3.5" />
               Print Race Bibs
             </button>
+            <button
+              type="button"
+              onClick={() => setLedgerOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              View Legend
+            </button>
             <button type="button" className="inline-flex items-center gap-2 rounded-lg bg-[#1e4a8e] px-3 py-2 text-xs font-semibold text-white hover:bg-[#163b72]">
               <ShieldX className="h-3.5 w-3.5" />
-              Assign Manual Bib Override
+              Assign Manual Bib
             </button>
           </div>
         </div>
@@ -201,11 +332,7 @@ export function AdminRegistrations() {
                 className="h-10 w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
               />
             </div>
-            <select
-              value={paymentFilter}
-              onChange={(e) => setPaymentFilter(e.target.value)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
-            >
+            <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="all">All Payment Status</option>
               <option value="paid">Paid</option>
               <option value="pending">Pending</option>
@@ -213,39 +340,19 @@ export function AdminRegistrations() {
               <option value="refunded">Refunded</option>
               <option value="unknown">Unknown</option>
             </select>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
-            >
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="created_desc">All Registration Status</option>
               <option value="created_asc">Created (Oldest)</option>
               <option value="cyclist_asc">Cyclist A-Z</option>
               <option value="cyclist_desc">Cyclist Z-A</option>
             </select>
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
-            >
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="all">All Categories</option>
-              {categoryOptions.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
+              {categoryOptions.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
             </select>
-            <select
-              value={raceFilter}
-              onChange={(e) => setRaceFilter(e.target.value)}
-              className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
-            >
+            <select value={raceFilter} onChange={(e) => setRaceFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="all">All Events</option>
-              {raceOptions.map((race) => (
-                <option key={race} value={race}>
-                  {race}
-                </option>
-              ))}
+              {raceOptions.map((race) => <option key={race} value={race}>{race}</option>)}
             </select>
             <input type="date" className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]" />
           </div>
@@ -353,13 +460,7 @@ export function AdminRegistrations() {
                               <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
                             </span>
                           ) : null}
-                          <span
-                            title={
-                              isPaid
-                                ? undefined
-                                : 'Bib is assigned only after payment is confirmed.'
-                            }
-                          >
+                          <span title={isPaid ? undefined : 'Bib is assigned only after payment is confirmed.'}>
                             {isPaid && r.bib_number ? r.bib_number : '—'}
                           </span>
                         </span>
@@ -379,44 +480,126 @@ export function AdminRegistrations() {
             </tbody>
           </table>
         </div>
+
         <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          <p>
-            Showing {showingFrom} to {showingTo} of {filtered.length} registrations
-          </p>
+          <p>Showing {showingFrom} to {showingTo} of {filtered.length} registrations</p>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400"
-              disabled={currentPage === 1}
-            >
-              ‹
-            </button>
+            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400" disabled={currentPage === 1}>‹</button>
             {pageNumbers.map((pageNumber) => (
               <button
                 key={pageNumber}
                 type="button"
                 onClick={() => setPage(pageNumber)}
-                className={
-                  pageNumber === currentPage
-                    ? 'rounded-md bg-[#0f5ea8] px-2.5 py-1 font-semibold text-white'
-                    : 'rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:bg-slate-50'
-                }
+                className={pageNumber === currentPage ? 'rounded-md bg-[#0f5ea8] px-2.5 py-1 font-semibold text-white' : 'rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:bg-slate-50'}
               >
                 {pageNumber}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400"
-              disabled={currentPage === totalPages}
-            >
-              ›
-            </button>
+            <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400" disabled={currentPage === totalPages}>›</button>
           </div>
         </div>
       </section>
+
+      {ledgerOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4">
+          <div className="w-full max-w-4xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-start justify-between border-b border-slate-100 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-md bg-slate-900 text-white">
+                  <ClipboardList className="h-3.5 w-3.5" />
+                </span>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Category Legend</h3>
+                  <p className="text-xs text-slate-500">View bib classes by event, discipline, and category.</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setLedgerOpen(false)} className="rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close legend">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="border-b border-slate-100 px-4 py-3">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <select
+                  value={ledgerEventId}
+                  onChange={(e) => { setLedgerEventId(e.target.value); setLedgerDiscipline('all'); setLedgerCategoryId('all') }}
+                  className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
+                >
+                  {ledgerEventOptions.length === 0 ? <option value="">No events available</option> : null}
+                  {ledgerEventOptions.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}
+                </select>
+                <select
+                  value={ledgerDiscipline}
+                  onChange={(e) => { setLedgerDiscipline(e.target.value); setLedgerCategoryId('all') }}
+                  className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
+                >
+                  <option value="all">All Disciplines</option>
+                  {ledgerDisciplineOptions.map((disc) => <option key={disc} value={disc}>{disc}</option>)}
+                </select>
+                <select
+                  value={ledgerCategoryId}
+                  onChange={(e) => setLedgerCategoryId(e.target.value)}
+                  className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
+                >
+                  <option value="all">All Categories</option>
+                  {ledgerCategoryOptions.map((cat) => <option key={cat.id} value={cat.id}>{cat.category_name ?? cat.id}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="max-h-[55vh] overflow-auto p-4">
+              {ledgerLoading ? <p className="text-sm text-slate-500">Loading legend…</p> : null}
+              {!ledgerLoading && ledgerError ? <p className="text-sm text-rose-600">{ledgerError}</p> : null}
+              {!ledgerLoading && !ledgerError && ledgerRows.length === 0 ? (
+                <p className="text-sm text-slate-500">No legend entries found for this filter.</p>
+              ) : null}
+              {!ledgerLoading && !ledgerError && ledgerRows.length > 0 ? (
+                <>
+                  <table className="min-w-full divide-y divide-slate-200 text-xs sm:text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Discipline</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Category</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Event Type</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Bib Class Code</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {ledgerRows.map((item) => {
+                        const category = ledgerCategories.find((c) => c.id === item.race_category_id)
+                        const eventTypeName = ledgerEventTypes.find((t) => t.slug === item.entry_event_type_slug)?.name ?? formatEventTypeSlugLabel(item.entry_event_type_slug)
+                        return (
+                          <tr key={item.id}>
+                            <td className="px-3 py-2 text-slate-700">{category?.discipline ?? '—'}</td>
+                            <td className="px-3 py-2 text-slate-700">{category?.category_name ?? '—'}</td>
+                            <td className="px-3 py-2 text-slate-700">{eventTypeName}</td>
+                            <td className="px-3 py-2">
+                              <span className="inline-flex items-center rounded-md bg-[#1e4a8e] px-2.5 py-1 text-xs font-bold text-white">
+                                {item.bib_class_code ?? '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  <p className="mt-3 text-xs text-slate-500">Total {ledgerRows.length} records</p>
+                </>
+              ) : null}
+            </div>
+
+            <div className="flex justify-end border-t border-slate-100 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setLedgerOpen(false)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -435,15 +618,11 @@ function StatCard({
   loading?: boolean
 }) {
   const iconClass =
-    tone === 'emerald'
-      ? 'bg-emerald-50 text-emerald-600'
-      : tone === 'amber'
-        ? 'bg-amber-50 text-amber-600'
-        : tone === 'blue'
-          ? 'bg-blue-50 text-blue-600'
-          : tone === 'rose'
-            ? 'bg-rose-50 text-rose-600'
-            : 'bg-violet-50 text-violet-600'
+    tone === 'emerald' ? 'bg-emerald-50 text-emerald-600'
+    : tone === 'amber' ? 'bg-amber-50 text-amber-600'
+    : tone === 'blue' ? 'bg-blue-50 text-blue-600'
+    : tone === 'rose' ? 'bg-rose-50 text-rose-600'
+    : 'bg-violet-50 text-violet-600'
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
       <div className="flex items-start justify-between">

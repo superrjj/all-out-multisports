@@ -12,6 +12,21 @@ export function formatDate(value: unknown) {
   })
 }
 
+/** Date and time for admin tables (e.g. QR scan history). */
+export function formatDateTime(value: unknown) {
+  if (!value) return '—'
+  const date = new Date(String(value))
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'Asia/Manila',
+  })
+}
+
 export function formatMoney(value: unknown) {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value ?? 0))
 }

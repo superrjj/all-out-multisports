@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import type { TooltipItem } from 'chart.js'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  Tooltip,
+  Legend,
+  Filler,
+} from 'chart.js'
+import { Line, Bar } from 'react-chartjs-2'
 import {
   Bike,
   CalendarDays,
@@ -15,6 +28,9 @@ import {
   Users,
 } from 'lucide-react'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
+import { supabase } from '../../lib/supabase'
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
 
 function StatCard({
   label,
@@ -35,7 +51,7 @@ function StatCard({
         <div>
           <p className="text-xs font-medium text-slate-500">{label}</p>
           <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[26px]">{value}</p>
-          <p className="mt-1 flex items-center gap-1 text-xs font-medium text-emerald-600">
+          <p className="mt-1 flex items-center gap-1 text-xs font-medium text-slate-600">
             <TrendingUp className="h-3.5 w-3.5" />
             {trend}
           </p>
@@ -57,93 +73,164 @@ function ChartPlaceholder({ title, children }: { title: string; children: React.
   )
 }
 
-function MonthlyRegistrationsChart() {
-  const points = [20, 35, 28, 45, 38, 55, 48, 62, 58, 70, 65, 78]
-  const max = Math.max(...points)
-  const w = 280
-  const h = 120
-  const pad = 8
-  const coords = points
-    .map((p, i) => {
-      const x = pad + (i / (points.length - 1)) * (w - pad * 2)
-      const y = h - pad - (p / max) * (h - pad * 2)
-      return `${x},${y}`
-    })
-    .join(' ')
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-full w-full" preserveAspectRatio="none">
-      <polyline
-        fill="none"
-        stroke="#1e4a8e"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={coords}
-      />
-      <polyline
-        fill="url(#gradDash)"
-        stroke="none"
-        points={`${pad},${h - pad} ${coords} ${w - pad},${h - pad}`}
-      />
-      <defs>
-        <linearGradient id="gradDash" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#1e4a8e" stopOpacity="0.2" />
-          <stop offset="100%" stopColor="#1e4a8e" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-    </svg>
-  )
+const lineChartOptionsBase = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index' as const, intersect: false },
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
+    y: { beginAtZero: true },
+  },
 }
 
-function RevenueChart() {
-  return (
-    <svg viewBox="0 0 280 120" className="h-full w-full">
-      <path
-        d="M 8 100 Q 40 60 70 75 T 130 50 T 190 65 T 272 35 L 272 112 L 8 112 Z"
-        fill="url(#revFill)"
-        opacity={0.35}
-      />
-      <path
-        d="M 8 100 Q 40 60 70 75 T 130 50 T 190 65 T 272 35"
-        fill="none"
-        stroke="#0d9488"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-      <defs>
-        <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#0d9488" stopOpacity="0.5" />
-          <stop offset="100%" stopColor="#0d9488" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-    </svg>
+function MonthlyRegistrationsChartJs({ labels, data }: { labels: string[]; data: number[] }) {
+  const empty = data.every((p) => p === 0)
+  const chartData = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          label: 'Registrations',
+          data,
+          borderColor: '#1e4a8e',
+          backgroundColor: 'rgba(30, 74, 142, 0.12)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 3,
+          pointBackgroundColor: '#1e4a8e',
+        },
+      ],
+    }),
+    [labels, data],
   )
-}
-
-function BarTrendChart() {
-  const bars = [40, 55, 48, 72, 65, 80, 58, 90, 75, 85, 70, 95]
-  const max = Math.max(...bars)
+  const options = useMemo(
+    () => ({
+      ...lineChartOptionsBase,
+      scales: {
+        ...lineChartOptionsBase.scales,
+        y: { beginAtZero: true, ticks: { precision: 0 } },
+      },
+    }),
+    [],
+  )
+  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
   return (
-    <div className="flex h-full items-end justify-between gap-1 px-2 pb-2 pt-4">
-      {bars.map((h, i) => (
-        <div
-          key={i}
-          className="flex-1 rounded-t bg-[#6366f1]/80"
-          style={{ height: `${(h / max) * 100}%`, minHeight: '8%' }}
-        />
-      ))}
+    <div className="h-full min-h-[12rem] w-full">
+      <Line data={chartData} options={options} />
     </div>
   )
 }
 
-function DonutCategory() {
-  const segments = [
-    { label: 'Road Bike', pct: 40, color: '#1e4a8e' },
-    { label: 'MTB', pct: 30, color: '#0d9488' },
-    { label: 'Gravel', pct: 15, color: '#d97706' },
-    { label: 'Fun Ride', pct: 10, color: '#7c3aed' },
-    { label: 'Elite', pct: 5, color: '#64748b' },
-  ]
+function RevenueChartJs({ labels, data }: { labels: string[]; data: number[] }) {
+  const empty = data.every((p) => p === 0)
+  const chartData = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          label: 'Revenue',
+          data,
+          borderColor: '#0d9488',
+          backgroundColor: 'rgba(13, 148, 136, 0.15)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 3,
+          pointBackgroundColor: '#0d9488',
+        },
+      ],
+    }),
+    [labels, data],
+  )
+  const options = useMemo(
+    () => ({
+      ...lineChartOptionsBase,
+      plugins: {
+        ...lineChartOptionsBase.plugins,
+        tooltip: {
+          callbacks: {
+            label: (item: TooltipItem<'line'>) =>
+              `₱${Number(item.parsed.y ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: (value: string | number) =>
+              `₱${Number(value).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`,
+          },
+        },
+      },
+    }),
+    [],
+  )
+  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
+  return (
+    <div className="h-full min-h-[12rem] w-full">
+      <Line data={chartData} options={options} />
+    </div>
+  )
+}
+
+function EventParticipationBarChartJs({
+  labels,
+  data,
+  usePercentScale,
+}: {
+  labels: string[]
+  data: number[]
+  usePercentScale: boolean
+}) {
+  const empty = labels.length === 0
+  const chartData = useMemo(
+    () => ({
+      labels,
+      datasets: [
+        {
+          label: usePercentScale ? 'Capacity filled' : 'Registrations',
+          data,
+          backgroundColor: 'rgba(99, 102, 241, 0.85)',
+          borderRadius: 4,
+        },
+      ],
+    }),
+    [labels, data, usePercentScale],
+  )
+  const options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 45, autoSkip: true } },
+        y: usePercentScale
+          ? {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                callback: (value: string | number) => `${value}%`,
+              },
+            }
+          : { beginAtZero: true, ticks: { precision: 0 } },
+      },
+    }),
+    [usePercentScale],
+  )
+  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
+  return (
+    <div className="h-full min-h-[12rem] w-full">
+      <Bar data={chartData} options={options} />
+    </div>
+  )
+}
+
+function DonutCategory({ segments, total }: { segments: Array<{ label: string; pct: number; color: string }>; total: number }) {
+  if (segments.length === 0 || total === 0) {
+    return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
+  }
   let acc = 0
   const gradientStops = segments
     .map((s) => {
@@ -161,7 +248,7 @@ function DonutCategory() {
         }}
       >
         <div className="absolute inset-[18%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-          <span className="text-lg font-bold text-slate-900">2,458</span>
+          <span className="text-lg font-bold text-slate-900">{total.toLocaleString()}</span>
           <span className="text-[10px] text-slate-500">total</span>
         </div>
       </div>
@@ -188,9 +275,26 @@ const quickActions = [
   { label: 'System Settings', to: '/admin/settings', icon: Settings },
 ] as const
 
-function initials(email: string) {
+function initialsFromEmail(email: string) {
   const local = email.split('@')[0] ?? '?'
   return local.slice(0, 2).toUpperCase()
+}
+
+function riderDisplayName(row: AdminRegistrationRow) {
+  const name = row.rider_full_name?.trim()
+  if (name) return name
+  return row.registrant_email?.trim() ?? '—'
+}
+
+function riderAvatarInitials(row: AdminRegistrationRow) {
+  const name = row.rider_full_name?.trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase()
+    return name.slice(0, 2).toUpperCase()
+  }
+  if (row.registrant_email) return initialsFromEmail(row.registrant_email)
+  return '—'
 }
 
 function statusPill(status: string) {
@@ -203,44 +307,177 @@ function statusPill(status: string) {
 
 export function AdminDashboard() {
   const [rows, setRows] = useState<AdminRegistrationRow[]>([])
+  const [events, setEvents] = useState<
+    Array<{
+      id: string
+      title: string | null
+      event_date: string | null
+      status: string | null
+      rider_limit: number | null
+      poster_url: string | null
+      banner_url: string | null
+    }>
+  >([])
+  const [announcements, setAnnouncements] = useState<Array<{ id: string; title: string | null; excerpt: string | null; published_at: string | null; updated_at: string | null; is_published: boolean | null }>>([])
+  const [paidOrders, setPaidOrders] = useState<Array<{ amount: number | null; created_at: string | null }>>([])
+  const [registrationCountByEvent, setRegistrationCountByEvent] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     let active = true
     setLoading(true)
-    void adminApi
-      .registrationsList()
-      .then((data) => {
+    void (async () => {
+      try {
+        const registrations = await adminApi.registrationsList()
+        const [eventsResult, announcementsResult, paidOrdersResult, registrationFormsResult] = await Promise.all([
+          supabase
+            .from('events')
+            .select('id, title, event_date, status, rider_limit, poster_url, banner_url')
+            .order('event_date', { ascending: true })
+            .limit(100),
+          supabase.from('announcements').select('id, title, excerpt, published_at, updated_at, is_published').order('updated_at', { ascending: false }).limit(5),
+          supabase.from('payment_orders').select('amount, created_at, status').eq('status', 'paid').order('created_at', { ascending: false }).limit(500),
+          supabase.from('registration_forms').select('event_id').limit(5000),
+        ])
+
+        if (eventsResult.error) throw eventsResult.error
+        if (paidOrdersResult.error) throw paidOrdersResult.error
+        if (registrationFormsResult.error) throw registrationFormsResult.error
+        if (announcementsResult.error) {
+          console.warn('Announcements unavailable:', announcementsResult.error.message)
+        }
+
+        const eventCounts = new Map<string, number>()
+        for (const form of registrationFormsResult.data ?? []) {
+          const eventId = String(form.event_id ?? '').trim()
+          if (!eventId) continue
+          eventCounts.set(eventId, (eventCounts.get(eventId) ?? 0) + 1)
+        }
+
         if (!active) return
-        setRows(data)
-      })
-      .catch((e) => {
+        setRows(registrations)
+        setEvents(
+          (eventsResult.data ?? []) as Array<{
+            id: string
+            title: string | null
+            event_date: string | null
+            status: string | null
+            rider_limit: number | null
+            poster_url: string | null
+            banner_url: string | null
+          }>,
+        )
+        setAnnouncements((announcementsResult.data ?? []) as Array<{ id: string; title: string | null; excerpt: string | null; published_at: string | null; updated_at: string | null; is_published: boolean | null }>)
+        setPaidOrders((paidOrdersResult.data ?? []) as Array<{ amount: number | null; created_at: string | null }>)
+        setRegistrationCountByEvent(eventCounts)
+      } catch (e) {
         if (!active) return
         setError((e as Error).message || 'Failed to load admin data.')
-      })
-      .finally(() => {
+      } finally {
         if (!active) return
         setLoading(false)
-      })
+      }
+    })()
     return () => {
       active = false
     }
   }, [])
 
+  const monthlyRegistrationSeries = useMemo(() => {
+    const now = new Date()
+    const keys: string[] = []
+    const labels: string[] = []
+    for (let i = 11; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      labels.push(d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }))
+    }
+    const byMonth = new Map<string, number>(keys.map((k) => [k, 0]))
+    for (const row of rows) {
+      if (!row.created_at) continue
+      const d = new Date(row.created_at)
+      if (Number.isNaN(d.getTime())) continue
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      if (byMonth.has(key)) byMonth.set(key, (byMonth.get(key) ?? 0) + 1)
+    }
+    return { labels, data: keys.map((k) => byMonth.get(k) ?? 0) }
+  }, [rows])
+
+  const monthlyRevenueSeries = useMemo(() => {
+    const now = new Date()
+    const keys: string[] = []
+    const labels: string[] = []
+    for (let i = 11; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      labels.push(d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }))
+    }
+    const byMonth = new Map<string, number>(keys.map((k) => [k, 0]))
+    for (const order of paidOrders) {
+      if (!order.created_at) continue
+      const d = new Date(order.created_at)
+      if (Number.isNaN(d.getTime())) continue
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      if (byMonth.has(key)) byMonth.set(key, (byMonth.get(key) ?? 0) + Number(order.amount ?? 0))
+    }
+    return { labels, data: keys.map((k) => byMonth.get(k) ?? 0) }
+  }, [paidOrders])
+
+  const eventParticipationSeries = useMemo(() => {
+    const slice = events.slice(0, 12)
+    const labels = slice.map((e) => {
+      const t = (e.title ?? 'Event').trim() || 'Event'
+      return t.length > 14 ? `${t.slice(0, 14)}…` : t
+    })
+    const usePercentScale = slice.length > 0 && slice.every((e) => Number(e.rider_limit ?? 0) > 0)
+    const data = slice.map((event) => {
+      const total = registrationCountByEvent.get(event.id) ?? 0
+      const limit = Number(event.rider_limit ?? 0)
+      if (limit > 0) return Math.round(Math.max(0, Math.min(100, (total / limit) * 100)))
+      return total
+    })
+    return { labels, data, usePercentScale }
+  }, [events, registrationCountByEvent])
+
+  const categorySegments = useMemo(() => {
+    const byDiscipline = new Map<string, number>()
+    for (const row of rows) {
+      const key = String(row.discipline ?? 'Unspecified').trim() || 'Unspecified'
+      byDiscipline.set(key, (byDiscipline.get(key) ?? 0) + 1)
+    }
+    const sorted = Array.from(byDiscipline.entries()).sort((a, b) => b[1] - a[1])
+    const top = sorted.slice(0, 5)
+    const remainder = sorted.slice(5).reduce((sum, [, count]) => sum + count, 0)
+    if (remainder > 0) top.push(['Other', remainder])
+    const total = top.reduce((sum, [, count]) => sum + count, 0)
+    const colors = ['#1e4a8e', '#0d9488', '#d97706', '#7c3aed', '#64748b', '#ef4444']
+    return {
+      total,
+      segments: top.map(([label, count], idx) => ({
+        label,
+        pct: total > 0 ? Math.round((count / total) * 100) : 0,
+        color: colors[idx % colors.length],
+      })),
+    }
+  }, [rows])
+
   const stats = useMemo(() => {
     const totalRegs = rows.length
     const paid = rows.filter((r) => String(r.payment_status ?? '').toLowerCase() === 'paid').length
     const uniqueEmails = new Set(rows.map((r) => r.registrant_email).filter(Boolean)).size
+    const activeEvents = events.filter((event) => String(event.status ?? '').toLowerCase() === 'published').length
+    const completedEvents = events.filter((event) => String(event.status ?? '').toLowerCase() === 'completed').length
+    const revenue = paidOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0)
     return {
       totalRegs,
       paid,
       cyclists: uniqueEmails || totalRegs,
-      activeEvents: 8,
-      completedEvents: 12,
-      revenue: paid * 1000,
+      activeEvents,
+      completedEvents,
+      revenue,
     }
-  }, [rows])
+  }, [rows, events, paidOrders])
 
   const recent = rows.slice(0, 5)
 
@@ -250,42 +487,42 @@ export function AdminDashboard() {
         <StatCard
           label="Total Cyclists"
           value={stats.cyclists.toLocaleString()}
-          trend="+12% from last month"
+          trend={`${stats.cyclists.toLocaleString()} unique riders`}
           icon={Users}
           iconBg="bg-blue-600"
         />
         <StatCard
           label="Total Registrations"
           value={stats.totalRegs.toLocaleString()}
-          trend="+12% from last month"
+          trend="Latest registrations snapshot"
           icon={ClipboardList}
           iconBg="bg-emerald-600"
         />
         <StatCard
           label="Active Events"
           value={String(stats.activeEvents)}
-          trend="+12% from last month"
+          trend="Published events"
           icon={CalendarDays}
           iconBg="bg-violet-600"
         />
         <StatCard
           label="Completed Events"
           value={String(stats.completedEvents)}
-          trend="+12% from last month"
+          trend="Marked as completed"
           icon={Trophy}
           iconBg="bg-orange-500"
         />
         <StatCard
           label="Paid Registrations"
           value={stats.paid.toLocaleString()}
-          trend="+12% from last month"
+          trend="Successful payment status"
           icon={CreditCard}
           iconBg="bg-teal-600"
         />
         <StatCard
           label="Revenue Summary"
           value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
-          trend="+12% from last month"
+          trend="From paid payment orders"
           icon={Bike}
           iconBg="bg-lime-600"
         />
@@ -293,16 +530,20 @@ export function AdminDashboard() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
         <ChartPlaceholder title="Monthly Registrations">
-          <MonthlyRegistrationsChart />
+          <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
         </ChartPlaceholder>
         <ChartPlaceholder title="Revenue Analytics">
-          <RevenueChart />
+          <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
         </ChartPlaceholder>
         <ChartPlaceholder title="Event Participation Trends">
-          <BarTrendChart />
+          <EventParticipationBarChartJs
+            labels={eventParticipationSeries.labels}
+            data={eventParticipationSeries.data}
+            usePercentScale={eventParticipationSeries.usePercentScale}
+          />
         </ChartPlaceholder>
         <ChartPlaceholder title="Category Participation">
-          <DonutCategory />
+          <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
         </ChartPlaceholder>
       </div>
 
@@ -345,10 +586,10 @@ export function AdminDashboard() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                            {r.registrant_email ? initials(r.registrant_email) : '—'}
+                            {riderAvatarInitials(r)}
                           </span>
-                          <span className="max-w-[120px] truncate text-xs sm:text-sm">
-                            {r.registrant_email ?? r.id.slice(0, 8)}
+                          <span className="max-w-[140px] truncate text-xs sm:text-sm" title={riderDisplayName(r)}>
+                            {riderDisplayName(r)}
                           </span>
                         </div>
                       </td>
@@ -387,27 +628,39 @@ export function AdminDashboard() {
             </Link>
           </div>
           <ul className="divide-y divide-slate-100 p-2">
-            {[
-              { name: 'Hari ng Ahon — Criterium', date: 'May 30, 2026', prog: '654 / 800', published: true },
-              { name: 'Hari ng Ahon — ITT', date: 'May 31, 2026', prog: '420 / 600', published: true },
-              { name: 'Season Finale (draft)', date: 'Jun 15, 2026', prog: '0 / 500', published: false },
-            ].map((ev) => (
-              <li key={ev.name} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-200" />
+            {events.slice(0, 5).map((ev) => {
+              const registered = registrationCountByEvent.get(ev.id) ?? 0
+              const cap = Number(ev.rider_limit ?? 0)
+              const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
+              return (
+              <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+                <img
+                  src={posterSrc}
+                  alt=""
+                  className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
+                  onError={(e) => {
+                    e.currentTarget.src = '/bg2.png'
+                  }}
+                />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">{ev.name}</p>
-                  <p className="text-xs text-slate-500">{ev.date}</p>
-                  <p className="mt-1 text-xs text-slate-600">Registration: {ev.prog}</p>
+                  <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
+                  <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
+                  </p>
                 </div>
                 <span
                   className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                    ev.published ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                   }`}
                 >
-                  {ev.published ? 'Published' : 'Draft'}
+                  {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
                 </span>
               </li>
-            ))}
+            )})}
+            {!loading && events.length === 0 ? (
+              <li className="px-3 py-4 text-xs text-slate-500">No events found.</li>
+            ) : null}
           </ul>
         </div>
 
@@ -419,20 +672,21 @@ export function AdminDashboard() {
             </Link>
           </div>
           <ul className="divide-y divide-slate-100 p-2">
-            {[
-              { title: 'Route update — ITT segment', snippet: 'Minor adjustment near Radar station…', date: 'Apr 26' },
-              { title: 'Bib claiming schedule', snippet: 'Claiming opens May 28 at Burnham…', date: 'Apr 22' },
-              { title: 'Weather advisory', snippet: 'Prepare for cool morning temps…', date: 'Apr 20' },
-            ].map((a) => (
-              <li key={a.title} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+            {announcements.map((a) => (
+              <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
                 <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-900">{a.title}</p>
-                  <p className="line-clamp-2 text-xs text-slate-600">{a.snippet}</p>
-                  <p className="mt-1 text-[10px] text-slate-400">{a.date}</p>
+                  <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
+                  <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
+                  </p>
                 </div>
               </li>
             ))}
+            {!loading && announcements.length === 0 ? (
+              <li className="px-3 py-4 text-xs text-slate-500">No announcements found.</li>
+            ) : null}
           </ul>
         </div>
       </div>

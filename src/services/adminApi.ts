@@ -5,9 +5,11 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'unknow
 export interface AdminRegistrationRow {
   id: string
   created_at?: string
+  event_id?: string | null
   bib_number?: string | null
   race_type?: string | null
   entry_event_type_label?: string | null
+  entry_event_type_slug?: string | null
   discipline?: string | null
   age_category?: string | null
   event_title?: string | null
@@ -60,7 +62,7 @@ export const adminApi = {
     const { data: forms, error: formsError } = await supabase
       .from('registration_forms')
       .select(
-        'id, created_at, status, registrant_email, user_id, event_id, bib_number, race_category_id, checkout_bundle_id, entry_event_type_label',
+        'id, created_at, status, registrant_email, user_id, event_id, bib_number, race_category_id, checkout_bundle_id, entry_event_type_label, entry_event_type_slug',
       )
       .order('created_at', { ascending: false })
       .limit(200)
@@ -77,6 +79,7 @@ export const adminApi = {
       race_category_id?: string | null
       checkout_bundle_id?: string | null
       entry_event_type_label?: string | null
+      entry_event_type_slug?: string | null
     }>
 
     const registrationIds = base.map((f) => f.id)
@@ -184,9 +187,11 @@ export const adminApi = {
       return {
         id: f.id,
         created_at: f.created_at,
+        event_id: f.event_id ?? null,
         bib_number: f.bib_number ?? null,
         race_type: ev?.race_type ?? null,
         entry_event_type_label: f.entry_event_type_label ?? null,
+        entry_event_type_slug: f.entry_event_type_slug ?? null,
         discipline: rider?.discipline ?? null,
         age_category: rider?.age_category ?? null,
         event_title: ev?.title ?? null,
