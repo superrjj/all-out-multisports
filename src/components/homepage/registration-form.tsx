@@ -1129,14 +1129,14 @@ function Field({
   error?: string
 }) {
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <label className="text-sm font-semibold text-slate-900">{label}</label>
       <input
         value={value}
         type={type}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-md border bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 sm:text-sm ${type === 'date' ? 'min-h-[44px]' : ''} ${error ? 'border-rose-400' : 'border-slate-300'
+        className={`block h-11 w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:h-10 sm:text-sm ${type === 'date' ? 'min-h-[44px]' : ''} ${error ? 'border-rose-400' : 'border-slate-300'
           }`}
       />
       {error && <p className="text-xs text-rose-500">{error}</p>}
@@ -1160,12 +1160,12 @@ function SelectField({
   placeholder?: string
 }) {
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <label className="text-sm font-semibold text-slate-900">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-md border bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 sm:text-sm ${error ? 'border-rose-400' : 'border-slate-300'
+        className={`block h-11 w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:h-10 sm:text-sm ${error ? 'border-rose-400' : 'border-slate-300'
           }`}
       >
         {placeholder && (
