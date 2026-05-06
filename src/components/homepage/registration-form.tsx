@@ -246,6 +246,18 @@ export function RegistrationForm() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const clearFieldError = (key: string) => {
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+  const updateFormField = (key: keyof typeof form, value: string) => {
+    setForm((prev) => ({ ...prev, [key]: value }))
+    clearFieldError(key)
+  }
 
   // ── Events ─────────────────────────────────────────────────────────────────
   const [events, setEvents] = useState<Event[]>([])
@@ -344,12 +356,14 @@ export function RegistrationForm() {
     setSelectedEventTypeSlugs((prev) =>
       prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
     )
+    clearFieldError('eventTypes')
   }
 
   const toggleCategory = (raceCategoryId: string) => {
     setSelectedCategoryIds((prev) =>
       prev.includes(raceCategoryId) ? prev.filter((id) => id !== raceCategoryId) : [...prev, raceCategoryId],
     )
+    clearFieldError('category')
   }
 
   // ── Race Categories from DB ────────────────────────────────────────────────
@@ -738,21 +752,21 @@ export function RegistrationForm() {
             value={form.email}
             placeholder="you@gmail.com"
             error={fieldErrors.email}
-            onChange={(v) => setForm((p) => ({ ...p, email: v }))}
+            onChange={(v) => updateFormField('email', v)}
           />
           <Field
             label={<>First Name <span className="text-rose-500">*</span></>}
             value={form.firstName}
             placeholder="Juan"
             error={fieldErrors.firstName}
-            onChange={(v) => setForm((p) => ({ ...p, firstName: v }))}
+            onChange={(v) => updateFormField('firstName', v)}
           />
           <Field
             label={<>Last Name <span className="text-rose-500">*</span></>}
             value={form.lastName}
             placeholder="Dela Cruz"
             error={fieldErrors.lastName}
-            onChange={(v) => setForm((p) => ({ ...p, lastName: v }))}
+            onChange={(v) => updateFormField('lastName', v)}
           />
           <SelectField
             label={<>Gender <span className="text-rose-500">*</span></>}
@@ -760,48 +774,48 @@ export function RegistrationForm() {
             options={['Male', 'Female']}
             placeholder="Select gender"
             error={fieldErrors.gender}
-            onChange={(v) => setForm((p) => ({ ...p, gender: v }))}
+            onChange={(v) => updateFormField('gender', v)}
           />
           <Field
             label={<>Date Of Birth <span className="text-rose-500">*</span></>}
             type="date"
             value={form.birthDate}
             error={fieldErrors.birthDate}
-            onChange={(v) => setForm((p) => ({ ...p, birthDate: v }))}
+            onChange={(v) => updateFormField('birthDate', v)}
           />
           <Field
             label={<>Address <span className="text-rose-500">*</span></>}
             value={form.address}
             placeholder="Baguio City"
             error={fieldErrors.address}
-            onChange={(v) => setForm((p) => ({ ...p, address: v }))}
+            onChange={(v) => updateFormField('address', v)}
           />
           <Field
             label={<>Contact Number <span className="text-rose-500">*</span></>}
             value={form.contactNumber}
             placeholder="+63 9XX XXX XXXX"
             error={fieldErrors.contactNumber}
-            onChange={(v) => setForm((p) => ({ ...p, contactNumber: v }))}
+            onChange={(v) => updateFormField('contactNumber', v)}
           />
           <Field
             label={<>Emergency Contact <span className="text-rose-500">*</span></>}
             value={form.emergencyContactName}
             placeholder="Full name"
             error={fieldErrors.emergencyContactName}
-            onChange={(v) => setForm((p) => ({ ...p, emergencyContactName: v }))}
+            onChange={(v) => updateFormField('emergencyContactName', v)}
           />
           <Field
             label={<>Emergency Contact Number <span className="text-rose-500">*</span></>}
             value={form.emergencyContactNumber}
             placeholder="+63 9XX XXX XXXX"
             error={fieldErrors.emergencyContactNumber}
-            onChange={(v) => setForm((p) => ({ ...p, emergencyContactNumber: v }))}
+            onChange={(v) => updateFormField('emergencyContactNumber', v)}
           />
           <Field
             label="Team Name"
             value={form.teamName}
             placeholder="Optional"
-            onChange={(v) => setForm((p) => ({ ...p, teamName: v }))}
+            onChange={(v) => updateFormField('teamName', v)}
           />
         </div>
 
@@ -840,7 +854,7 @@ export function RegistrationForm() {
             <p className="text-xs text-rose-600">No categories configured for this event.</p>
           ) : !form.gender.trim() ? (
             <p className="mt-1 text-xs text-slate-500">
-              Choose your gender above — categories filter automatically by eligibility (male / female / all).
+              Select your gender first so we can show the disciplines and categories available for your rider profile.
             </p>
           ) : disciplineGroupsForRider.length === 0 ? (
             <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
@@ -1030,7 +1044,10 @@ export function RegistrationForm() {
               <button
                 key={size}
                 type="button"
-                onClick={() => setShirtSize(size)}
+                onClick={() => {
+                  setShirtSize(size)
+                  clearFieldError('shirtSize')
+                }}
                 className={`min-w-[3rem] rounded-md border px-3 py-2 text-sm sm:min-w-[3.25rem] ${shirtSize === size
                   ? 'border-[#cfae3f] bg-[#fff6d6] text-slate-900'
                   : 'border-slate-300 bg-white text-slate-700 hover:text-slate-900'
