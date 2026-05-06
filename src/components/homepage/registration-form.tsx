@@ -1136,8 +1136,9 @@ function Field({
         type={type}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={`block h-11 w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:h-10 sm:text-sm ${type === 'date' ? 'min-h-[44px]' : ''} ${error ? 'border-rose-400' : 'border-slate-300'
-          }`}
+       className={`block w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:text-sm ${
+        type === 'date' ? 'h-11 min-h-[44px]' : 'h-11 sm:h-10'
+      } ${error ? 'border-rose-400' : 'border-slate-300'}`}
       />
       {error && <p className="text-xs text-rose-500">{error}</p>}
     </div>
