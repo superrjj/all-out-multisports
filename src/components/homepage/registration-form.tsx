@@ -776,6 +776,7 @@ export function RegistrationForm() {
             error={fieldErrors.gender}
             onChange={(v) => updateFormField('gender', v)}
           />
+          <div className="md:col-span-2">
           <Field
             label={<>Date Of Birth <span className="text-rose-500">*</span></>}
             type="date"
@@ -783,6 +784,7 @@ export function RegistrationForm() {
             error={fieldErrors.birthDate}
             onChange={(v) => updateFormField('birthDate', v)}
           />
+        </div>
           <Field
             label={<>Address <span className="text-rose-500">*</span></>}
             value={form.address}
