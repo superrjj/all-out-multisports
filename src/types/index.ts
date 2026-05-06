@@ -23,4 +23,10 @@ export interface Event {
   route_map_url?: string
   elevation_profile_url?: string
   status: 'draft' | 'published' | 'completed'
+  /** Event day range (from DB). */
+  start_date?: string | null
+  end_date?: string | null
+  /** Registration closes (from DB). */
+  registration_deadline?: string | null
+  registration_closes_at?: string | null
 }

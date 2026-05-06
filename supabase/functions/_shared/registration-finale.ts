@@ -12,12 +12,20 @@ export function extractBibSequenceByPrefix(bibNumber: string, prefix: string) {
   return Number.isFinite(n) ? n : 0
 }
 
+/** 4-digit bibs: CCSS — class (01–99) + sequence (01–99). */
+function extractSequenceFromFourDigitClassBib(bibNumber: string, classTwoDigit: string) {
+  const value = String(bibNumber ?? '').trim()
+  if (!/^\d{4}$/.test(value)) return 0
+  if (!value.startsWith(classTwoDigit)) return 0
+  const n = Number.parseInt(value.slice(2), 10)
+  return Number.isFinite(n) ? n : 0
+}
+
 function fallbackEventTypeCodeFromSlug(slug: string): string {
   const s = String(slug ?? '').trim().toLowerCase()
   if (s === 'criterium') return '1'
   if (s === 'itt') return '2'
   if (s === 'road_race' || s === 'road-race' || s === 'road race') return '3'
-  // Keep a deterministic fallback so bibs can still be assigned if event_types row is incomplete.
   return '9'
 }
 
@@ -26,6 +34,27 @@ function parseEventTypeSlugs(raw: unknown): string[] {
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
+}
+
+/**
+ * Avoid race: two PayMongo paths (webhook + checkout redirect) can call assign concurrently.
+ * Only one UPDATE should win; the other must not overwrite (e.g. 2101 → 2102) when both computed max=0.
+ */
+async function updateRegistrationBibIfStillNull(
+  supabase: SupabaseClient,
+  registrationId: string,
+  nextBib: string,
+  now: string,
+) {
+  const { data: updated, error } = await supabase
+    .from('registration_forms')
+    .update({ bib_number: nextBib, updated_at: now })
+    .eq('id', registrationId)
+    .is('bib_number', null)
+    .select('id')
+  if (error) throw error
+  if (!updated?.length) return false
+  return true
 }
 
 /** Assign bib for one registration if missing; registration should already be status confirmed when paid. */
@@ -42,8 +71,6 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   if (!registration.race_category_id) throw new Error('Missing race category for registration.')
   let eventTypeSlug = String(registration.entry_event_type_slug ?? '').trim().toLowerCase()
   if (!eventTypeSlug && registration.event_id) {
-    // Legacy fallback: for older rows that do not store entry_event_type_slug,
-    // infer from event.race_type only when event has exactly one configured type.
     const { data: eventRow, error: eventErr } = await supabase
       .from('events')
       .select('race_type')
@@ -63,6 +90,55 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
     .eq('id', registration.race_category_id)
     .maybeSingle()
   if (raceCategoryError) throw raceCategoryError
+
+  const { data: bibClassRow, error: bibClassError } = await supabase
+    .from('event_race_bib_classes')
+    .select('bib_class_code')
+    .eq('event_id', registration.event_id)
+    .eq('race_category_id', registration.race_category_id)
+    .eq('entry_event_type_slug', eventTypeSlug)
+    .maybeSingle()
+  if (bibClassError) throw bibClassError
+
+  if (bibClassRow?.bib_class_code != null) {
+    const classNum = Number(bibClassRow.bib_class_code)
+    if (!Number.isFinite(classNum) || classNum < 1 || classNum > 99) {
+      throw new Error('Invalid bib class code in event_race_bib_classes.')
+    }
+    const classTwoDigit = String(classNum).padStart(2, '0')
+
+    const { data: existingBibs, error: bibError } = await supabase
+      .from('registration_forms')
+      .select('bib_number')
+      .eq('event_id', registration.event_id)
+      .eq('race_category_id', registration.race_category_id)
+      .eq('entry_event_type_slug', eventTypeSlug)
+      .eq('status', 'confirmed')
+      .not('bib_number', 'is', null)
+      .order('created_at', { ascending: true })
+      .limit(5000)
+    if (bibError) throw bibError
+
+    const maxSequence = (existingBibs ?? []).reduce((max: number, row: { bib_number: string }) => {
+      const seq = extractSequenceFromFourDigitClassBib(row.bib_number, classTwoDigit)
+      return seq > max ? seq : max
+    }, 0)
+    const nextSequence = maxSequence + 1
+    const riderLimit = Number(raceCategory?.rider_limit ?? 0)
+    if (Number.isFinite(riderLimit) && riderLimit > 0 && nextSequence > riderLimit) {
+      const categoryCode = String(raceCategory?.category_name ?? '').trim() || 'category'
+      throw new Error(`Category limit reached for ${categoryCode}. Max riders: ${riderLimit}.`)
+    }
+    if (nextSequence > 99) {
+      throw new Error(`Bib sequence exceeded 99 for class ${classTwoDigit}.`)
+    }
+    const nextBib = `${classTwoDigit}${String(nextSequence).padStart(2, '0')}`
+
+    await updateRegistrationBibIfStillNull(supabase, registrationId, nextBib, now)
+    return
+  }
+
+  // Legacy bibs (events saved before event_race_bib_classes): prefix = event_code + category.code + NN
   const categoryCode = String(raceCategory?.code ?? '').trim()
   if (!categoryCode) throw new Error('Missing category code for registration category.')
 
@@ -76,7 +152,7 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   const eventTypeCode = eventTypeCodeRaw || fallbackEventTypeCodeFromSlug(eventTypeSlug)
   const bibPrefix = `${eventTypeCode}${categoryCode}`
 
-  const { data: existingBibs, error: bibError } = await supabase
+  const { data: existingBibsLegacy, error: bibErrorLegacy } = await supabase
     .from('registration_forms')
     .select('bib_number')
     .eq('event_id', registration.event_id)
@@ -86,29 +162,25 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
     .not('bib_number', 'is', null)
     .order('created_at', { ascending: true })
     .limit(5000)
-  if (bibError) throw bibError
+  if (bibErrorLegacy) throw bibErrorLegacy
 
-  const maxSequence = (existingBibs ?? []).reduce((max: number, row: { bib_number: string }) => {
+  const maxSequenceLegacy = (existingBibsLegacy ?? []).reduce((max: number, row: { bib_number: string }) => {
     const seq = extractBibSequenceByPrefix(row.bib_number, bibPrefix)
     return seq > max ? seq : max
   }, 0)
-  const nextSequence = maxSequence + 1
-  const riderLimit = Number(raceCategory?.rider_limit ?? 0)
-  if (Number.isFinite(riderLimit) && riderLimit > 0 && nextSequence > riderLimit) {
+  const nextSequenceLegacy = maxSequenceLegacy + 1
+  const riderLimitLegacy = Number(raceCategory?.rider_limit ?? 0)
+  if (Number.isFinite(riderLimitLegacy) && riderLimitLegacy > 0 && nextSequenceLegacy > riderLimitLegacy) {
     throw new Error(
-      `Category limit reached for ${String(raceCategory?.category_name ?? categoryCode)}. Max riders: ${riderLimit}.`,
+      `Category limit reached for ${String(raceCategory?.category_name ?? categoryCode)}. Max riders: ${riderLimitLegacy}.`,
     )
   }
-  if (nextSequence > 99) {
+  if (nextSequenceLegacy > 99) {
     throw new Error(`Category bib sequence exceeded 2 digits for prefix ${bibPrefix}.`)
   }
-  const nextBib = `${bibPrefix}${String(nextSequence).padStart(2, '0')}`
+  const nextBibLegacy = `${bibPrefix}${String(nextSequenceLegacy).padStart(2, '0')}`
 
-  const { error: updateError } = await supabase
-    .from('registration_forms')
-    .update({ bib_number: nextBib, updated_at: now })
-    .eq('id', registrationId)
-  if (updateError) throw updateError
+  await updateRegistrationBibIfStillNull(supabase, registrationId, nextBibLegacy, now)
 }
 
 export async function markRegistrationConfirmed(
@@ -164,7 +236,6 @@ export async function finalizeBundleSiblingsPaid(supabase: SupabaseClient, prima
     try {
       await assignBibIfMissing(supabase, row.id)
     } catch (e) {
-      // Collect per-row errors so one failure doesn't block the rest of the bundle.
       bibErrors.push(`[${row.id}] ${(e as Error).message}`)
       console.error('[finalizeBundleSiblingsPaid] assignBibIfMissing failed for', row.id, e)
     }

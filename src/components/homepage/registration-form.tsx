@@ -22,6 +22,7 @@ interface RaceCategory {
   rider_limit: number | null
   active: boolean
   gender_eligibility?: GenderEligibility | string | null
+  created_at?: string
 }
 
 interface DisciplineGroup {
@@ -34,6 +35,25 @@ interface DisciplineGroup {
 const shirtSizes = ['XS', 'S', 'M', 'L', 'XL']
 const cardClass =
   'rounded-xl border border-slate-200 bg-white p-4 shadow-[0_12px_30px_-12px_rgba(15,23,42,0.28),0_6px_14px_-8px_rgba(15,23,42,0.2)] sm:p-5'
+
+function ShimmerBar({ className }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-slate-200 ${className ?? ''}`} />
+}
+
+function FormCardSkeleton({ tall }: { tall?: boolean }) {
+  return (
+    <div className={`${cardClass} space-y-3`}>
+      <ShimmerBar className="h-5 w-40" />
+      <ShimmerBar className="h-3 w-full max-w-md" />
+      <div className={`grid gap-3 ${tall ? 'min-h-[120px]' : ''} md:grid-cols-2`}>
+        <ShimmerBar className="h-10 w-full" />
+        <ShimmerBar className="h-10 w-full" />
+        <ShimmerBar className="h-10 w-full" />
+        <ShimmerBar className="h-10 w-full" />
+      </div>
+    </div>
+  )
+}
 
 // ─── Age category detection & resolution ────────────────────────────────────
 
@@ -169,6 +189,17 @@ function nameLooksLikeMenOnlyAgeOrOpen(name: string): boolean {
 
 function disciplineHasFemaleSpecificCategory(categories: RaceCategory[]): boolean {
   return categories.some((c) => effectiveGenderEligibility(c) === 'female')
+}
+
+/** Earliest category `created_at` in the list — older disciplines sort first. */
+function minCategoryCreatedAtMs(cats: RaceCategory[]): number {
+  let m = Infinity
+  for (const c of cats) {
+    if (!c.created_at) continue
+    const t = new Date(c.created_at).getTime()
+    if (!Number.isNaN(t) && t < m) m = t
+  }
+  return m === Infinity ? Number.MAX_SAFE_INTEGER : m
 }
 
 /**
@@ -340,7 +371,7 @@ export function RegistrationForm() {
       try {
         const { data, error: err } = await supabase
           .from('race_categories')
-          .select('id, discipline, category_name, code, rider_limit, active, gender_eligibility')
+          .select('id, discipline, category_name, code, rider_limit, active, gender_eligibility, created_at')
           .eq('event_id', selectedEvent.id)
           .eq('active', true)
 
@@ -349,16 +380,20 @@ export function RegistrationForm() {
           setDisciplineGroups([])
           return
         }
-        const rows = data as RaceCategory[]
+        const rowsSorted = [...(data as RaceCategory[])].sort((a, b) => {
+          const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+          const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+          return ta - tb
+        })
         const groupMap = new Map<string, RaceCategory[]>()
-        for (const row of rows) {
+        for (const row of rowsSorted) {
           const disc = (row.discipline ?? '').trim() || 'General'
           if (!groupMap.has(disc)) groupMap.set(disc, [])
           groupMap.get(disc)!.push(row)
         }
-        const groups: DisciplineGroup[] = Array.from(groupMap.entries()).map(
-          ([discipline, categories]) => ({ discipline, categories }),
-        )
+        const groups: DisciplineGroup[] = Array.from(groupMap.entries())
+          .map(([discipline, categories]) => ({ discipline, categories }))
+          .sort((a, b) => minCategoryCreatedAtMs(a.categories) - minCategoryCreatedAtMs(b.categories))
         setDisciplineGroups(groups)
 
         // Auto-select first discipline
@@ -387,6 +422,7 @@ export function RegistrationForm() {
         categories: g.categories.filter((c) => categoryMatchesRiderGenderInDiscipline(c, form.gender, g.categories)),
       }))
       .filter((g) => g.categories.length > 0)
+      .sort((a, b) => minCategoryCreatedAtMs(a.categories) - minCategoryCreatedAtMs(b.categories))
   }, [disciplineGroups, form.gender])
 
   const currentDisciplineGroup = useMemo(
@@ -441,6 +477,9 @@ export function RegistrationForm() {
       Math.max(1, selectedCategoryIdsInDiscipline.length),
     [registrationFee, selectedEventTypeSlugs.length, selectedCategoryIdsInDiscipline.length],
   )
+
+  const showFormSkeleton =
+    eventsLoading || (!!selectedEvent?.id && (categoriesLoading || eventTypesLoading))
 
   const currentCategoryNames = useMemo(
     () => categoriesEligibleForRider.map((c) => c.category_name),
@@ -565,6 +604,28 @@ export function RegistrationForm() {
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  if (showFormSkeleton) {
+    return (
+      <section className="bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 lg:px-8">
+        <div className="mx-auto w-full max-w-[760px] space-y-5 sm:space-y-6">
+          <ShimmerBar className="h-44 w-full rounded-lg sm:h-52" />
+          <Link to="/register/info" className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900">
+            &larr; Back
+          </Link>
+          <div className="space-y-1">
+            <ShimmerBar className="h-8 w-56" />
+            <ShimmerBar className="h-4 w-72 max-w-full" />
+          </div>
+          <FormCardSkeleton tall />
+          <FormCardSkeleton tall />
+          <FormCardSkeleton tall />
+          <FormCardSkeleton />
+          <ShimmerBar className="h-12 w-full max-w-xs rounded-md" />
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 lg:px-8">
       <div className="mx-auto w-full max-w-[760px] space-y-5 sm:space-y-6">
@@ -763,12 +824,12 @@ export function RegistrationForm() {
 
           {categoriesLoading ? (
             <div className="grid gap-4 md:grid-cols-2">
-              {Array.from({ length: 1 }).map((_, i) => (
+              {Array.from({ length: 2 }).map((_, i) => (
                 <div key={i} className="animate-pulse rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="h-4 w-32 rounded bg-slate-200 mb-2" />
-                  <div className="h-3 w-40 rounded bg-slate-100 mb-4" />
+                  <div className="mb-2 h-4 w-32 rounded bg-slate-200" />
+                  <div className="mb-4 h-3 w-40 rounded bg-slate-100" />
                   <div className="space-y-2">
-                    {Array.from({ length: 1 }).map((_, j) => (
+                    {Array.from({ length: 4 }).map((_, j) => (
                       <div key={j} className="h-3 w-3/4 rounded bg-slate-100" />
                     ))}
                   </div>

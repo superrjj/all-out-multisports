@@ -589,17 +589,10 @@ function Step1({
 }
 
 // ─── Step 2 ──────────────────────────────────────────────────────────────────
-const BIKE_DISCIPLINE_ICONS: Record<string, string> = {
-  'Road Bike': '🚴',
-  'Mountain Bike': '🚵',
-  MTB: '🚵',
-  Gravel: '🚵',
-  'Gravel Bike': '🚵',
-  'E-Bike (Open)': '⚡',
-  Mixed: '🎽',
-}
-
 const CATEGORY_PREVIEW_LIMIT = 3
+
+/** Roughly three category rows before the list scrolls (Step 2 categories block). */
+const CATEGORY_SCROLL_MAX_HEIGHT_REM = 28
 
 function Step2({
   disciplines,
@@ -610,10 +603,8 @@ function Step2({
   setDisciplines: React.Dispatch<React.SetStateAction<Discipline[]>>
   disciplinesLoading?: boolean
 }) {
-  const [categoriesExpandedByDiscipline, setCategoriesExpandedByDiscipline] = useState<Record<string, boolean>>({})
-
   const addDiscipline = () => {
-    setDisciplines((prev) => [...prev, { id: crypto.randomUUID(), name: '', categories: [] }])
+    setDisciplines((prev) => [{ id: crypto.randomUUID(), name: '', categories: [] }, ...prev])
   }
 
   const removeDiscipline = (id: string) => setDisciplines((prev) => prev.filter((d) => d.id !== id))
@@ -630,7 +621,6 @@ function Step2({
           : {
             ...d,
             categories: [
-              ...d.categories,
               {
                 id: crypto.randomUUID(),
                 name: '',
@@ -639,6 +629,7 @@ function Step2({
                 active: true,
                 genderEligibility: 'all',
               },
+              ...d.categories,
             ],
           },
       ),
@@ -703,10 +694,7 @@ function Step2({
           <div key={disc.id} className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex items-start justify-between gap-4 mb-3">
               <div className="flex-1 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">{BIKE_DISCIPLINE_ICONS[disc.name] ?? '🚴'}</span>
-                  <p className="text-sm font-semibold text-slate-800">{disc.name || 'New Discipline'}</p>
-                </div>
+                <p className="text-sm font-semibold text-slate-800">{disc.name || 'New Discipline'}</p>
                 <label>
                   <p className="mb-1 text-[10px] font-medium text-slate-500">
                     Discipline Name <span className="text-red-500">*</span>
@@ -744,11 +732,11 @@ function Step2({
                 No categories yet. Add at least one category under this discipline.
               </div>
             ) : (
-              <div className="space-y-3">
-                {(categoriesExpandedByDiscipline[disc.id]
-                  ? disc.categories
-                  : disc.categories.slice(0, CATEGORY_PREVIEW_LIMIT)
-                ).map((cat) => (
+              <div
+                className="space-y-3 overflow-y-auto overflow-x-hidden pr-1 [scrollbar-gutter:stable]"
+                style={{ maxHeight: `${CATEGORY_SCROLL_MAX_HEIGHT_REM}rem` }}
+              >
+                {disc.categories.map((cat) => (
                   <div key={cat.id} className="rounded-lg border border-slate-200 bg-white p-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       <label>
@@ -823,22 +811,6 @@ function Step2({
                     </div>
                   </div>
                 ))}
-                {disc.categories.length > CATEGORY_PREVIEW_LIMIT ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCategoriesExpandedByDiscipline((prev) => ({
-                        ...prev,
-                        [disc.id]: !prev[disc.id],
-                      }))
-                    }
-                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline"
-                  >
-                    {categoriesExpandedByDiscipline[disc.id]
-                      ? 'See less'
-                      : `See more (${disc.categories.length - CATEGORY_PREVIEW_LIMIT})`}
-                  </button>
-                ) : null}
               </div>
             )}
           </div>
@@ -846,8 +818,12 @@ function Step2({
       </div>
 
       {disciplines.length > 0 && (
-        <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700">
-          ℹ️ Rider limit is the maximum number of participants allowed for each category.
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700 space-y-1.5">
+          <p>ℹ️ Rider limit is the maximum number of participants allowed for each category.</p>
+          <p>
+            Paid riders get a <strong>4-digit numeric bib</strong> (class 01–99 + rider 01–99). Each{' '}
+            <strong>event type × category</strong> pair gets its own class when you publish; keep (types × categories) ≤ 99.
+          </p>
         </div>
       )}
 
@@ -1585,12 +1561,62 @@ function CreateEventModal({
           })),
         )
 
+        if (categoryRows.length > 0 && selectedTypeSlugs.length > 0) {
+          const comboCount = categoryRows.length * selectedTypeSlugs.length
+          if (comboCount > 99) {
+            toast.error(
+              'Too many event type × category combinations for 4-digit bibs (max 99 classes). Reduce categories or event types.',
+            )
+            return
+          }
+        }
+
+        const { error: deleteBibClassErr } = await supabase.from('event_race_bib_classes').delete().eq('event_id', eventIdForSave)
+        if (deleteBibClassErr) throw deleteBibClassErr
+
         const { error: deleteErr } = await supabase.from('race_categories').delete().eq('event_id', eventIdForSave)
         if (deleteErr) throw deleteErr
 
         if (categoryRows.length > 0) {
-          const { error: insertErr } = await supabase.from('race_categories').insert(categoryRows)
+          const { data: insertedCats, error: insertErr } = await supabase
+            .from('race_categories')
+            .insert(categoryRows)
+            .select('id, discipline, category_name')
           if (insertErr) throw insertErr
+
+          const slugsSorted = [...selectedTypeSlugs]
+            .map((s) => String(s).trim().toLowerCase())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b))
+          const catsSorted = [...(insertedCats ?? [])].sort((a, b) => {
+            const da = String(a.discipline ?? '')
+            const db = String(b.discipline ?? '')
+            if (da !== db) return da.localeCompare(db)
+            return String(a.category_name ?? '').localeCompare(String(b.category_name ?? ''))
+          })
+
+          if (slugsSorted.length > 0) {
+            const bibClassRows: Array<{
+              event_id: string
+              race_category_id: string
+              entry_event_type_slug: string
+              bib_class_code: number
+            }> = []
+            let bibClassCode = 1
+            for (const slug of slugsSorted) {
+              for (const cat of catsSorted) {
+                bibClassRows.push({
+                  event_id: eventIdForSave,
+                  race_category_id: String(cat.id),
+                  entry_event_type_slug: slug,
+                  bib_class_code: bibClassCode,
+                })
+                bibClassCode += 1
+              }
+            }
+            const { error: bibClassInsertErr } = await supabase.from('event_race_bib_classes').insert(bibClassRows)
+            if (bibClassInsertErr) throw bibClassInsertErr
+          }
         }
 
         toast.success(mode === 'edit' ? 'Event updated successfully.' : 'Event created successfully.')
