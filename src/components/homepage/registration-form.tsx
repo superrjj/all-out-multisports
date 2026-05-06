@@ -32,7 +32,7 @@ interface DisciplineGroup {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const shirtSizes = ['XS', 'S', 'M', 'L', 'XL']
+const shirtSizes = ['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large']
 const cardClass =
   'rounded-xl border border-slate-200 bg-white p-4 shadow-[0_12px_30px_-12px_rgba(15,23,42,0.28),0_6px_14px_-8px_rgba(15,23,42,0.2)] sm:p-5'
 

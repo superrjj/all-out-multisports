@@ -561,7 +561,7 @@ export function AdminRegistrations() {
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Discipline</th>
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Category</th>
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Event Type</th>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Bib Class Code</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Bib Code</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white">

@@ -23,7 +23,6 @@ import {
   QrCode,
   Settings,
   TrendingUp,
-  Trophy,
   Upload,
   Users,
 } from 'lucide-react'
@@ -483,7 +482,7 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         <StatCard
           label="Total Cyclists"
           value={stats.cyclists.toLocaleString()}
@@ -505,13 +504,7 @@ export function AdminDashboard() {
           icon={CalendarDays}
           iconBg="bg-violet-600"
         />
-        <StatCard
-          label="Completed Events"
-          value={String(stats.completedEvents)}
-          trend="Marked as completed"
-          icon={Trophy}
-          iconBg="bg-orange-500"
-        />
+    
         <StatCard
           label="Paid Registrations"
           value={stats.paid.toLocaleString()}

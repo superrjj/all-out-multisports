@@ -140,7 +140,7 @@ export function AdminLayout({ children }: { children: ReactNode; title?: string;
                 aria-expanded={menuOpen}
                 className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 py-1 pl-1 pr-2 transition hover:bg-slate-100 sm:pr-3"
               >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1e4a8e] text-xs font-semibold text-white">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-900 text-xs font-semibold text-white">
                   {displayName.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="hidden min-w-0 text-left sm:block">
