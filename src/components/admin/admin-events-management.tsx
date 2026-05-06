@@ -100,8 +100,12 @@ async function uploadToBucket(bucket: string, file: File | null) {
 function formatTime(value: unknown) {
   if (!value) return '—'
   const date = new Date(String(value))
-  if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleTimeString('en-PH', { 
+    hour: 'numeric', 
+    minute: '2-digit',
+    timeZone: 'Asia/Manila'
+  })
 }
 
 function toDateInputValue(value: unknown) {
@@ -1532,7 +1536,7 @@ function CreateEventModal({
           venue: form.city ? `${form.venue.trim()}, ${form.city.trim()}` : form.venue.trim(),
           route_map_url: routeMapUrl,
           event_date: eventTimestamp,
-          // FIX: persist end_date as a plain date string
+          start_date: form.event_date || null, 
           end_date: form.end_date || null,
           registration_deadline: deadlineTimestamp,
           registration_fee: Number(form.registration_fee || 0),
@@ -2168,13 +2172,19 @@ function EventCard({
           <h3 className="text-3xl font-bold leading-tight text-slate-900">{String(event.title ?? 'Untitled')}</h3>
           <p className="mt-1 text-sm text-slate-500 line-clamp-1">{String(event.description ?? '')}</p>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-            <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />{formatDate(event.event_date)}</span>
-            <span className="flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" />{formatTime(event.start_time ?? '6:00 AM')}</span>
+           <span className="flex items-center gap-1">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {formatDate(event.event_date)}
+            {event.end_date ? ` – ${formatDate(event.end_date)}` : ''}
+          </span>
+            <span className="flex items-center gap-1">
+              <Clock3 className="h-3.5 w-3.5" />
+              {formatTime(event.start_time)} – {formatTime(event.end_time)}
+            </span>
             <span className="flex items-center gap-1"><MapPinned className="h-3.5 w-3.5" />{venue}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
             <span className="inline-flex flex-wrap items-center gap-1.5" title={String(event.race_type ?? '')}>
-              <span aria-hidden>🚴</span>
               {raceTypeLabels.map((label, i) => (
                 <span
                   key={`${label}-${i}`}
