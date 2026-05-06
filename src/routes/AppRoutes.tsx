@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { Bike, LoaderCircle } from 'lucide-react'
 import { AuthPage } from '../components/auth/auth-page'
 import { AdminDashboard } from '../components/admin/admin-dashboard'
 import { AdminLayout } from '../components/admin/admin-layout'
@@ -29,15 +30,24 @@ import { RegistrationPaymentSuccess } from '../components/homepage/registration-
 import { Shell } from '../components/Shell'
 import { useAuth } from '../hooks/useAuth'
 
+function RouteLoadingState() {
+  return (
+    <section className="flex min-h-[calc(100vh-9rem)] items-center justify-center px-4 py-10">
+      <div className="flex flex-col items-center gap-2">
+        <Bike className="h-8 w-8 text-slate-800" aria-hidden />
+        <LoaderCircle className="h-5 w-5 animate-spin text-[#cfae3f]" aria-hidden />
+      </div>
+    </section>
+  )
+}
+
 /** Public home; admins are sent straight to the admin dashboard (same layout as after login). */
 function HomeRoute() {
   const { session, loading, role, roleLoading } = useAuth()
   if (loading || (session && roleLoading)) {
     return (
       <Shell>
-        <section className="flex min-h-[40vh] items-center justify-center px-4 py-16 text-sm text-slate-600">
-          Loading…
-        </section>
+        <RouteLoadingState />
       </Shell>
     )
   }
@@ -57,7 +67,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <Shell>
-        <section className="px-4 py-10 text-center text-sm text-slate-600">Checking session...</section>
+        <RouteLoadingState />
       </Shell>
     )
   }
@@ -76,7 +86,7 @@ function PublicOnly({ children }: { children: ReactNode }) {
   if (loading || (session && roleLoading)) {
     return (
       <Shell>
-        <section className="px-4 py-10 text-center text-sm text-slate-600">Checking session...</section>
+        <RouteLoadingState />
       </Shell>
     )
   }
@@ -89,7 +99,7 @@ function RequireAdmin({ children }: { children: ReactNode }) {
   if (loading || (session && roleLoading)) {
     return (
       <Shell>
-        <section className="px-4 py-10 text-center text-sm text-slate-600">Checking access...</section>
+        <RouteLoadingState />
       </Shell>
     )
   }

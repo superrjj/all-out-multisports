@@ -1136,7 +1136,7 @@ function Field({
         type={type}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-md border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 ${error ? 'border-rose-400' : 'border-slate-300'
+        className={`w-full rounded-md border bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 sm:text-sm ${type === 'date' ? 'min-h-[44px]' : ''} ${error ? 'border-rose-400' : 'border-slate-300'
           }`}
       />
       {error && <p className="text-xs text-rose-500">{error}</p>}
@@ -1165,7 +1165,7 @@ function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-md border bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 ${error ? 'border-rose-400' : 'border-slate-300'
+        className={`w-full rounded-md border bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-[#cfae3f] sm:py-2 sm:text-sm ${error ? 'border-rose-400' : 'border-slate-300'
           }`}
       >
         {placeholder && (
