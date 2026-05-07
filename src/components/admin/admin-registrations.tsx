@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { jsPDF } from 'jspdf'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
 import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Mail, Printer, Search, ShieldX, Users, X } from 'lucide-react'
@@ -127,6 +128,197 @@ export function AdminRegistrations() {
       .finally(() => {
         setLoading(false)
       })
+  }
+
+  async function handlePrintRaceBibs() {
+    const printableRows = filtered
+      .map((row) => {
+        const riderName = String(row.rider_full_name ?? '').trim()
+        const bibNumber = String(row.bib_number ?? '').trim()
+        const jerseySize = String(row.jersey_size ?? '').trim()
+        const eventType = String(row.entry_event_type_label ?? formatEventTypeSlugLabel(row.entry_event_type_slug)).trim()
+        const discipline = String(row.discipline ?? '').trim()
+        const category = String(row.age_category ?? '').trim()
+        return { riderName, bibNumber, jerseySize, eventType, discipline, category }
+      })
+      .filter((row) => row.riderName && row.bibNumber)
+
+    if (printableRows.length === 0) {
+      setActionBanner({
+        text: 'No printable rows. Make sure riders already have bib numbers assigned.',
+        tone: 'warning',
+      })
+      return
+    }
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
+    doc.setFont('times', 'normal')
+
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 40
+    const tableWidth = pageWidth - margin * 2
+    const colWidths = [
+      tableWidth * 0.1,
+      tableWidth * 0.48,
+      tableWidth * 0.2,
+      tableWidth * 0.22,
+    ]
+    const headers = ['No.', 'Rider Name', 'Jersey Size', 'Bib Number']
+    const rowHeight = 24
+    const headerHeight = 28
+    const tableTopStart = 110
+    const groupLabelGap = 6
+
+    const toBibSortKey = (bib: string) => {
+      const normalized = String(bib ?? '').trim()
+      const match = normalized.match(/\d+/)
+      const numeric = match ? Number.parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER
+      return { numeric, normalized: normalized.toLowerCase() }
+    }
+
+    const sortedRows = [...printableRows].sort((a, b) => {
+      if (a.eventType !== b.eventType) return a.eventType.localeCompare(b.eventType)
+      if (a.discipline !== b.discipline) return a.discipline.localeCompare(b.discipline)
+      if (a.category !== b.category) return a.category.localeCompare(b.category)
+      const ak = toBibSortKey(a.bibNumber)
+      const bk = toBibSortKey(b.bibNumber)
+      if (ak.numeric !== bk.numeric) return ak.numeric - bk.numeric
+      return ak.normalized.localeCompare(bk.normalized)
+    })
+
+    const groupMap = new Map<string, typeof sortedRows>()
+    for (const row of sortedRows) {
+      const groupKey = `${row.eventType}||${row.discipline}||${row.category}`
+      const group = groupMap.get(groupKey) ?? []
+      group.push(row)
+      groupMap.set(groupKey, group)
+    }
+    const groupedRows = Array.from(groupMap.entries())
+      .map(([groupKey, rows]) => {
+        const [eventType, discipline, category] = groupKey.split('||')
+        return { eventType, discipline, category, rows }
+      })
+      .sort((a, b) => {
+        if (a.eventType !== b.eventType) return a.eventType.localeCompare(b.eventType)
+        if (a.discipline !== b.discipline) return a.discipline.localeCompare(b.discipline)
+        return a.category.localeCompare(b.category)
+      })
+
+    const loadLogoDataUrl = async (path: string): Promise<string | null> => {
+      try {
+        const response = await fetch(path)
+        if (!response.ok) return null
+        const blob = await response.blob()
+        return await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = () => {
+            const result = reader.result
+            if (typeof result === 'string') resolve(result)
+            else reject(new Error('Failed to decode logo image.'))
+          }
+          reader.onerror = () => reject(new Error('Failed to read logo image.'))
+          reader.readAsDataURL(blob)
+        })
+      } catch {
+        return null
+      }
+    }
+
+    const [hnaLogoDataUrl, allOutLogoDataUrl] = await Promise.all([
+      loadLogoDataUrl('/hna-logo.png'),
+      loadLogoDataUrl('/all_out_multisports_1.png'),
+    ])
+
+    const drawCell = (text: string, x: number, y: number, width: number, height: number, fontStyle: 'normal' | 'bold') => {
+      doc.rect(x, y, width, height)
+      doc.setFont('times', fontStyle)
+      doc.setFontSize(11)
+      doc.text(text || '—', x + width / 2, y + height / 2 + 4, { align: 'center' })
+    }
+
+    const rowsPerPage = Math.max(1, Math.floor((pageHeight - margin - tableTopStart) / rowHeight))
+    let y = tableTopStart
+    let overallPage = 1
+
+    const drawPageHeader = (groupLabel: string, groupPage: number, groupTotalPages: number) => {
+      const logoY = 20
+      const allOutW = 92
+      const allOutH = 26
+      const hnaW = 26
+      const hnaH = 26
+      const logoGap = 10
+      const logoBottomMargin = 10
+      const logoBlockWidth =
+        (allOutLogoDataUrl ? allOutW : 0) +
+        (allOutLogoDataUrl && hnaLogoDataUrl ? logoGap : 0) +
+        (hnaLogoDataUrl ? hnaW : 0)
+      let logoX = (pageWidth - logoBlockWidth) / 2
+
+      if (allOutLogoDataUrl) {
+        doc.addImage(allOutLogoDataUrl, 'PNG', logoX, logoY, allOutW, allOutH)
+        logoX += allOutW + (hnaLogoDataUrl ? logoGap : 0)
+      }
+      if (hnaLogoDataUrl) {
+        doc.addImage(hnaLogoDataUrl, 'PNG', logoX, logoY, hnaW, hnaH)
+      }
+      const logoBottomY = logoY + Math.max(allOutH, hnaH) + logoBottomMargin
+      doc.setFont('times', 'bold')
+      doc.setFontSize(16)
+      doc.text('Race Bib List', pageWidth / 2, logoBottomY + 16, { align: 'center' })
+      doc.setFont('times', 'normal')
+      doc.setFontSize(10)
+      doc.text(`Page ${groupPage} of ${groupTotalPages} (Group)`, pageWidth - margin, logoBottomY + 30, { align: 'right' })
+      doc.text(`Sheet ${overallPage}`, pageWidth - margin, logoBottomY + 42, { align: 'right' })
+      doc.setFont('times', 'bold')
+      doc.setFontSize(11)
+      doc.text(groupLabel, margin, logoBottomY + 48, { align: 'left' })
+    }
+
+    const drawTableHeader = () => {
+      y += groupLabelGap
+      let x = margin
+      for (let i = 0; i < headers.length; i++) {
+        drawCell(headers[i], x, y, colWidths[i], headerHeight, 'bold')
+        x += colWidths[i]
+      }
+      y += headerHeight
+    }
+
+    let isFirstPage = true
+    for (const group of groupedRows) {
+      const groupLabel = `Event Type: ${group.eventType || '—'}   |   Discipline: ${group.discipline || '—'}   |   Category: ${group.category || '—'}`
+      const groupTotalPages = Math.max(1, Math.ceil(group.rows.length / rowsPerPage))
+
+      let index = 0
+      let groupPage = 1
+      while (index < group.rows.length) {
+        if (!isFirstPage) doc.addPage()
+        isFirstPage = false
+        y = tableTopStart
+        drawPageHeader(groupLabel, groupPage, groupTotalPages)
+        drawTableHeader()
+
+        const chunk = group.rows.slice(index, index + rowsPerPage)
+        for (let i = 0; i < chunk.length; i++) {
+          const row = chunk[i]
+          const rowNumber = `${index + i + 1}.`
+          const values = [rowNumber, row.riderName, row.jerseySize, row.bibNumber]
+          let x = margin
+          for (let i = 0; i < values.length; i++) {
+            drawCell(values[i], x, y, colWidths[i], rowHeight, 'normal')
+            x += colWidths[i]
+          }
+          y += rowHeight
+        }
+
+        index += rowsPerPage
+        groupPage += 1
+        overallPage += 1
+      }
+    }
+
+    doc.save(`HNA-Race-Bib-List-${new Date().toISOString().slice(0, 10)}.pdf`)
   }
 
   useEffect(() => {
@@ -462,7 +654,11 @@ export function AdminRegistrations() {
               <Users className="h-3.5 w-3.5" />
               Import Participants
             </button>
-            <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            <button
+              type="button"
+              onClick={() => { void handlePrintRaceBibs() }}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
               <Printer className="h-3.5 w-3.5" />
               Print Race Bibs
             </button>

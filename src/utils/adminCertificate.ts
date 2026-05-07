@@ -24,7 +24,7 @@ async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return await res.blob()
 }
 
-async function renderCertificateToDataUrl(data: {
+export async function renderCertificateToDataUrl(data: {
   riderName: string
   category: string
   discipline: string
@@ -33,7 +33,7 @@ async function renderCertificateToDataUrl(data: {
   eventTitle: string
   verificationId: string
   qrValue: string
-}) {
+}, mimeType: 'image/png' | 'image/jpeg' = 'image/png') {
   const canvas = document.createElement('canvas')
   canvas.width = 1280
   canvas.height = 720
@@ -129,8 +129,8 @@ async function renderCertificateToDataUrl(data: {
   const qrCardX = 808
   const qrPadTop = 28
   const qrPadBottom = 28
-  const bibGap = 26
-  const regGap = 34
+  const bibGap = 58
+  const regGap = 38
   const qrCardHeight = qrPadTop + qrSize + bibGap + regGap + qrPadBottom
   const qrCardY = Math.round(22 + (canvas.height - 44 - qrCardHeight) / 2)
   const qrImgX = qrCardX + (qrCardWidth - qrSize) / 2
@@ -157,7 +157,7 @@ async function renderCertificateToDataUrl(data: {
   ctx.fillText(String(data.verificationId ?? ''), qrCardX + qrCardWidth / 2, regY)
   ctx.textAlign = 'start'
 
-  return canvas.toDataURL('image/png', 0.95)
+  return canvas.toDataURL(mimeType, 0.95)
 }
 
 export async function generateAndUploadAdminCertificate(registrationId: string) {
@@ -176,7 +176,7 @@ export async function generateAndUploadAdminCertificate(registrationId: string) 
     eventTitle: cert.eventTitle,
     verificationId: cert.verificationId,
     qrValue: cert.qrValue,
-  })
+  }, 'image/png')
 
   const blob = await dataUrlToBlob(dataUrl)
   const objectPath = certObjectPath(registrationId, cert.bibNumber)

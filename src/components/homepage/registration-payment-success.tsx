@@ -1,9 +1,9 @@
-import QRCode from 'qrcode'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 import { registrationService, reloadPageIfSessionExpiredInvokeError, type RegistrationCertificateData } from '../../services/registrationService'
+import { renderCertificateToDataUrl as renderSharedCertificateToDataUrl } from '../../utils/adminCertificate'
 
 const CERT_BUCKET = String(import.meta.env.VITE_CERT_BUCKET ?? '').trim()
 
@@ -16,37 +16,6 @@ function certObjectPath(registrationId: string, bibNumber: string) {
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl)
   return await res.blob()
-}
-
-async function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('Unable to render image asset.'))
-    img.src = src
-  })
-}
-
-function drawRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) {
-  const r = Math.min(radius, width / 2, height / 2)
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.lineTo(x + width - r, y)
-  ctx.quadraticCurveTo(x + width, y, x + width, y + r)
-  ctx.lineTo(x + width, y + height - r)
-  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
-  ctx.lineTo(x + r, y + height)
-  ctx.quadraticCurveTo(x, y + height, x, y + height - r)
-  ctx.lineTo(x, y + r)
-  ctx.quadraticCurveTo(x, y, x + r, y)
-  ctx.closePath()
 }
 
 export function RegistrationPaymentSuccess() {
@@ -88,204 +57,19 @@ export function RegistrationPaymentSuccess() {
 
   const renderCertificateToDataUrl = useCallback(
     async (data: RegistrationCertificateData, mimeType: 'image/png' | 'image/jpeg') => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 1280
-      canvas.height = 720
-      const ctx = canvas.getContext('2d')
-      if (!ctx) throw new Error('Unable to initialize certificate canvas.')
-      const [allOutLogo, hnaLogo] = await Promise.all([
-        loadImage('/all_out_multisports_1.png').catch(() => null),
-        loadImage('/hna-logo.png').catch(() => null),
-      ])
-
-      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height)
-      gradient.addColorStop(0, '#eff6ff')
-      gradient.addColorStop(1, '#ffffff')
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-      const leftShape = ctx.createLinearGradient(0, 0, 500, 300)
-      leftShape.addColorStop(0, 'rgba(11, 94, 215, 0.15)')
-      leftShape.addColorStop(1, 'rgba(0, 27, 68, 0.03)')
-      ctx.fillStyle = leftShape
-      ctx.beginPath()
-      ctx.moveTo(0, 0)
-      ctx.lineTo(500, 0)
-      ctx.lineTo(0, 330)
-      ctx.closePath()
-      ctx.fill()
-
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.1)'
-      ctx.beginPath()
-      ctx.arc(470, 380, 220, 0, Math.PI * 2)
-      ctx.fill()
-
-      ctx.fillStyle = '#001B44'
-      ctx.fillRect(0, 0, canvas.width, 22)
-      ctx.fillStyle = '#1a2e6e'
-      ctx.fillRect(0, canvas.height - 22, canvas.width, 22)
-
-      ctx.fillStyle = '#F59E0B'
-      ctx.beginPath()
-      ctx.moveTo(canvas.width - 100, 0)
-      ctx.lineTo(canvas.width, 0)
-      ctx.lineTo(canvas.width, 72)
-      ctx.closePath()
-      ctx.fill()
-
-      const leftColX = 56
-      const leftColWidth = Math.round(canvas.width * 0.6) - leftColX
-      const logoHeight = 56
-
-      // Measure total content height to vertically center the block
-      const totalContentHeight =
-        logoHeight + 16 +   // logo + gap
-        22 +                // "QR CODE · RACE CLAIM KIT"
-        24 +                // event title
-        11 +                // "RIDER NAME" label
-        40 +                // rider name (32px unified)
-        36 +                // gap before bib box
-        120 +               // bib box height
-        32 +                // gap before meta
-        30 + 13 +           // CATEGORY label+value (unified 13px/24px)
-        62 +                // EVENT TYPE offset (increased for visibility)
-        30 + 13             // EVENT TYPE label+value (unified 13px/24px)
-
-      const usableTop = 22
-      const usableBottom = canvas.height - 22
-      const logoY = Math.round(usableTop + (usableBottom - usableTop - totalContentHeight) / 2)
-
-      const logoStartX = leftColX
-      let cursorX = logoStartX
-      if (allOutLogo) {
-        const allOutWidth = Math.round((allOutLogo.width / Math.max(allOutLogo.height, 1)) * logoHeight)
-        ctx.drawImage(allOutLogo, cursorX, logoY, allOutWidth, logoHeight)
-        cursorX += allOutWidth + 12
-      }
-      if (hnaLogo) {
-        const hnaWidth = Math.round((hnaLogo.width / Math.max(hnaLogo.height, 1)) * logoHeight)
-        ctx.drawImage(hnaLogo, cursorX, logoY, hnaWidth, logoHeight)
-      }
-
-      const riderUpper = data.riderName.toUpperCase()
-      const eventUpper = data.eventTitle.toUpperCase()
-
-      let y = logoY + logoHeight + 16
-      ctx.fillStyle = '#64748b'
-      ctx.font = '700 11px Arial'
-      ctx.letterSpacing = '0.15em'
-      ctx.fillText('QR CODE · RACE CLAIM KIT', leftColX, y)
-      ctx.letterSpacing = '0'
-
-      y += 22
-      ctx.fillStyle = '#1d4ed8'
-      ctx.font = '700 13px Arial'
-      const eventMaxW = leftColWidth - 8
-      ctx.fillText(eventUpper, leftColX, y, eventMaxW)
-
-      y += 24
-      ctx.fillStyle = '#64748b'
-      ctx.font = '600 13px Arial'           // unified label font
-      ctx.fillText('RIDER NAME', leftColX, y)
-
-      y += 40
-      ctx.fillStyle = '#111827'
-      ctx.font = '700 32px Arial'           // unified value font
-      ctx.fillText(riderUpper, leftColX, y, eventMaxW)
-
-      const drawLabelValue = (
-        label: string,
-        value: string,
-        x: number,
-        y: number,
-        maxWidth?: number,
-      ) => {
-        ctx.fillStyle = '#475569'
-        ctx.font = '600 13px Arial'         // unified label font
-        ctx.fillText(label, x, y)
-        ctx.fillStyle = '#0f172a'
-        ctx.font = '700 24px Arial'         // unified value font
-        if (typeof maxWidth === 'number') {
-          ctx.fillText(value, x, y + 30, maxWidth)
-        } else {
-          ctx.fillText(value, x, y + 30)
-        }
-      }
-
-      const bibBoxTop = y + 36
-      drawRoundedRect(ctx, leftColX, bibBoxTop, 360, 120, 18)
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.78)'
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(203, 213, 225, 0.9)'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      ctx.fillStyle = '#475569'
-      ctx.font = '700 16px Arial'
-      ctx.fillText('BIB NUMBER', leftColX + 22, bibBoxTop + 36)
-      // Bib digits drawn after async QR work — avoids intermittent blank bib in PNG/email when yields occur mid-render.
-
-      const metaY = bibBoxTop + 120 + 32
-      drawLabelValue('CATEGORY', data.category, leftColX, metaY, 420)
-      drawLabelValue('DISCIPLINE', data.discipline, 540, metaY, 220)
-      drawLabelValue('EVENT TYPE', data.eventType, leftColX, metaY + 62, 640)
-      //                                                                       ↑ increased from 52 to 62
-
-      const qrSize = 224
-      const qrCardWidth = Math.round(canvas.width * 0.4) - 48
-      const qrCardX = leftColX + leftColWidth + 8
-      const qrPadTop = 28
-      const qrPadBottom = 28
-      const bibGap = 26
-      const regGap = 34
-      // Slightly taller card so enlarged QR + texts stay centered and balanced.
-      const qrCardHeight = qrPadTop + qrSize + bibGap + regGap + qrPadBottom
-      // Center the QR card vertically (reuse usableTop/usableBottom declared above)
-      const qrCardY = Math.round(usableTop + (usableBottom - usableTop - qrCardHeight) / 2)
-      const qrInnerTop = qrCardY + qrPadTop
-      const qrImgY = qrInnerTop
-      const qrImgX = qrCardX + (qrCardWidth - qrSize) / 2
-      const bibY = qrImgY + qrSize + bibGap
-      const regY = bibY + regGap
-
-      const qrDataUrl = await QRCode.toDataURL(data.qrValue, {
-        width: qrSize,
-        margin: 1,
-        color: { dark: '#111827', light: '#ffffff' },
-      })
-      const qrImage = await loadImage(qrDataUrl)  
-
-      ctx.save()
-      drawRoundedRect(ctx, qrCardX, qrCardY, qrCardWidth, qrCardHeight, 24)
-      ctx.fillStyle = '#ffffff'
-      ctx.fill()
-      ctx.shadowColor = 'rgba(2, 6, 23, 0.12)'
-      ctx.shadowBlur = 16
-      ctx.shadowOffsetY = 4
-      ctx.strokeStyle = 'rgba(203, 213, 225, 0.95)'
-      ctx.lineWidth = 1.5
-      ctx.stroke()
-      ctx.restore()
-
-      ctx.drawImage(qrImage, qrImgX, qrImgY, qrSize, qrSize)
-
-      const bibDisplay = String(data.bibNumber ?? '').trim()
-
-      ctx.fillStyle = '#111827'
-      ctx.font = '900 44px Arial'
-      const bibWidthQr = ctx.measureText(bibDisplay).width
-      ctx.fillText(bibDisplay, qrCardX + (qrCardWidth - bibWidthQr) / 2, bibY)
-
-      ctx.fillStyle = '#64748b'
-      ctx.font = '700 15px Arial'
-      const regWidth = ctx.measureText(data.verificationId).width
-      ctx.fillText(data.verificationId, qrCardX + (qrCardWidth - regWidth) / 2, regY)
-
-      ctx.fillStyle = '#0f172a'
-      ctx.font = '900 64px Arial'
-      ctx.fillText(bibDisplay, leftColX + 20, bibBoxTop + 96)
-
-      const fileType = mimeType === 'image/png' ? 'image/png' : 'image/jpeg'
-      return canvas.toDataURL(fileType, 0.92)
+      return await renderSharedCertificateToDataUrl(
+        {
+          riderName: data.riderName,
+          category: data.category,
+          discipline: data.discipline,
+          eventType: data.eventType,
+          bibNumber: data.bibNumber,
+          eventTitle: data.eventTitle,
+          verificationId: data.verificationId,
+          qrValue: data.qrValue,
+        },
+        mimeType,
+      )
     },
     [],
   )
