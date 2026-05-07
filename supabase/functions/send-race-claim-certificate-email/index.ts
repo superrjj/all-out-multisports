@@ -132,23 +132,21 @@ async function svgToPng(svg: string): Promise<Uint8Array> {
   ).filter((b): b is Uint8Array => b !== null)
 
   console.log(`[svgToPng] font buffers loaded: ${fontBuffers.length}/4`)
-  if (fontBuffers.length === 0) {
-    throw new Error('No fonts loaded — all text will be blank')
-  }
 
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: 1280 },
     font: {
       fontBuffers,
-      loadSystemFonts: false,
-      // These TTFs are typically "Inter 18pt" family (Google Fonts static). If the family name
-      // doesn't match what's used in the SVG, resvg renders all <text> as blank when loadSystemFonts=false.
-      defaultFontFamily: 'Inter 18pt',
-      sansSerifFamily: 'Inter 18pt',
-      serifFamily: 'Inter 18pt',
-      cursiveFamily: 'Inter 18pt',
-      fantasyFamily: 'Inter 18pt',
-      monospaceFamily: 'Inter 18pt',
+      // Always allow system fonts as a hard fallback so text never renders blank.
+      loadSystemFonts: true,
+      // Fonts can have different internal family names across builds (e.g. "Inter" vs "Inter 18pt").
+      // If the family name doesn't match what's used in the SVG, resvg renders <text> as blank.
+      defaultFontFamily: 'Inter',
+      sansSerifFamily: 'Inter',
+      serifFamily: 'Inter',
+      cursiveFamily: 'Inter',
+      fantasyFamily: 'Inter',
+      monospaceFamily: 'Inter',
     },
   })
   return resvg.render().asPng()
@@ -197,7 +195,7 @@ function buildCertificateSvg(args: {
     return parts.join('\n')
   })()
 
-  const ff = 'Inter 18pt'
+  const ff = 'sans-serif'
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <rect width="${W}" height="${H}" fill="${bg}"/>
@@ -226,6 +224,68 @@ function buildCertificateSvg(args: {
 </svg>`
 }
 
+async function buildCertificatePngBytes(registrationId: string, bibNumber: string): Promise<Uint8Array> {
+  const [{ data: reg, error: regErr }, logos] = await Promise.all([
+    supabaseAdmin
+      .from('registration_forms')
+      .select('id, event_id, race_category_id, entry_event_type_slug, entry_event_type_label')
+      .eq('id', registrationId)
+      .maybeSingle(),
+    Promise.all([fetchDataUrl('/allout-logo.png'), fetchDataUrl('/hna-logo.png')]),
+  ])
+  if (regErr) throw regErr
+  if (!reg?.id) throw new Error('Registration not found while building certificate.')
+
+  const [{ data: rider, error: riderErr }, { data: event, error: eventErr }, { data: raceCategory, error: rcErr }] =
+    await Promise.all([
+      supabaseAdmin
+        .from('registration_rider_details')
+        .select('first_name, last_name, age_category, discipline')
+        .eq('registration_id', registrationId)
+        .maybeSingle(),
+      supabaseAdmin.from('events').select('id, title, race_type').eq('id', reg.event_id).maybeSingle(),
+      reg.race_category_id
+        ? supabaseAdmin.from('race_categories').select('category_name, code').eq('id', reg.race_category_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ])
+  if (riderErr) throw riderErr
+  if (eventErr) throw eventErr
+  if (rcErr) throw rcErr
+
+  const riderName = [rider?.first_name, rider?.last_name].filter(Boolean).join(' ').trim() || 'Registered Rider'
+  const category = String(rider?.age_category ?? raceCategory?.category_name ?? 'Open Category')
+  const discipline = String(rider?.discipline ?? event?.race_type ?? 'Cycling')
+  const eventType = String(reg.entry_event_type_label ?? '').trim() || normalizeEventType(event?.race_type)
+  const verificationId = `REG-${new Date().getFullYear()}-${String(registrationId).replace(/-/g, '').slice(0, 10)}`
+  const qrPayload = JSON.stringify({
+    version: 2,
+    type: 'registration_qr',
+    bib_number: String(bibNumber),
+    verification_id: verificationId,
+    event_id: String(event?.id ?? reg.event_id ?? ''),
+    registration_id: registrationId,
+    event_type_slug: String(reg.entry_event_type_slug ?? '').trim() || null,
+    event_type_label: String(reg.entry_event_type_label ?? '').trim() || null,
+    category_code: String(raceCategory?.code ?? '').trim() || null,
+  })
+  const qrDataUrl = await QRCode.toDataURL(qrPayload, { margin: 1, width: 512 })
+
+  const svg = buildCertificateSvg({
+    riderName,
+    eventTitle: String(event?.title ?? 'Hari ng Ahon'),
+    bibNumber: String(bibNumber),
+    category,
+    discipline,
+    eventType,
+    verificationId,
+    qrDataUrl,
+    allOutLogoDataUrl: logos[0],
+    hnaLogoDataUrl: logos[1],
+  })
+  const pngBytes = await svgToPng(svg)
+  return await optimisePng(pngBytes)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405)
@@ -235,15 +295,6 @@ Deno.serve(async (req) => {
   if (!CERT_BUCKET) {
     console.warn('[send-race-claim-certificate-email] missing CERT_BUCKET')
     return jsonResponse({ error: 'CERT_BUCKET is not configured for this project.' }, 503)
-  }
-
-  if (!RESEND_API_KEY.trim()) {
-    console.warn('[send-race-claim-certificate-email] missing RESEND_API_KEY')
-    return jsonResponse({ error: 'RESEND_API_KEY is not configured for this project.' }, 503)
-  }
-  if (!RESEND_FROM.trim()) {
-    console.warn('[send-race-claim-certificate-email] missing RESEND_FROM')
-    return jsonResponse({ error: 'RESEND_FROM is not configured. Set it in .env / Supabase Edge secrets.' }, 503)
   }
 
   const authHeader = req.headers.get('authorization') || req.headers.get('Authorization')
@@ -256,7 +307,13 @@ Deno.serve(async (req) => {
   }
   const userId = authData.user.id
 
-  let body: { registrationId?: string; registrationIds?: string[] }
+  let body: {
+    registrationId?: string
+    registrationIds?: string[]
+    adminSend?: boolean
+    forceResend?: boolean
+    generateOnly?: boolean
+  }
   try {
     body = await req.json()
   } catch {
@@ -278,7 +335,10 @@ Deno.serve(async (req) => {
 
   if (regLookupError) return jsonResponse({ error: regLookupError.message }, 500)
   if (!registration?.id) return jsonResponse({ error: 'Registration not found' }, 404)
-  if (String(registration.user_id ?? '') !== userId) {
+  const { data: actorRoleRow } = await supabaseAdmin.from('users').select('role').eq('id', userId).maybeSingle()
+  const isAdmin = String(actorRoleRow?.role ?? '').toLowerCase() === 'admin'
+
+  if (!isAdmin && String(registration.user_id ?? '') !== userId) {
     const bid = String(registration.checkout_bundle_id ?? '').trim()
     if (!bid) return jsonResponse({ code: 'FORBIDDEN', message: 'Not your registration' }, 403)
     const { data: bundlePay } = await supabaseAdmin
@@ -303,6 +363,19 @@ Deno.serve(async (req) => {
 
   const recipient = String(registration.registrant_email ?? '').trim().toLowerCase()
   if (!recipient) return jsonResponse({ error: 'Registration has no email address.' }, 400)
+  const forceResend = Boolean(body.forceResend)
+  const generateOnly = Boolean(body.generateOnly)
+
+  if (!generateOnly) {
+    if (!RESEND_API_KEY.trim()) {
+      console.warn('[send-race-claim-certificate-email] missing RESEND_API_KEY')
+      return jsonResponse({ error: 'RESEND_API_KEY is not configured for this project.' }, 503)
+    }
+    if (!RESEND_FROM.trim()) {
+      console.warn('[send-race-claim-certificate-email] missing RESEND_FROM')
+      return jsonResponse({ error: 'RESEND_FROM is not configured. Set it in .env / Supabase Edge secrets.' }, 503)
+    }
+  }
 
   const requestedIds = Array.isArray(body.registrationIds)
     ? body.registrationIds.map((id) => String(id ?? '').trim()).filter(Boolean)
@@ -346,7 +419,7 @@ Deno.serve(async (req) => {
 
   for (const regRow of targetRegs) {
     const rid = String(regRow.id)
-    if (alreadySent.has(rid)) continue
+    if (!forceResend && alreadySent.has(rid)) continue
     const regStatus = String(regRow.status ?? '').toLowerCase()
     if (!['confirmed', 'paid'].includes(regStatus)) {
       notPaid.push(rid)
@@ -359,11 +432,27 @@ Deno.serve(async (req) => {
     }
     const objectPath = certObjectPath(rid, bibNumber)
     const existing = await supabaseAdmin.storage.from(CERT_BUCKET).download(objectPath)
+    let pngBytes: Uint8Array | null = null
     if (existing.error || !existing.data) {
+      try {
+        const generated = await buildCertificatePngBytes(rid, bibNumber)
+        const { error: uploadErr } = await supabaseAdmin.storage.from(CERT_BUCKET).upload(objectPath, generated, {
+          contentType: 'image/png',
+          upsert: true,
+        })
+        if (uploadErr) throw uploadErr
+        pngBytes = generated
+      } catch {
+        missingStorage.push({ registration_id: rid, storage_path: objectPath })
+        continue
+      }
+    } else {
+      pngBytes = new Uint8Array(await existing.data.arrayBuffer())
+    }
+    if (!pngBytes) {
       missingStorage.push({ registration_id: rid, storage_path: objectPath })
       continue
     }
-    const pngBytes = new Uint8Array(await existing.data.arrayBuffer())
     attachments.push({
       filename: `race-claim-kit-${bibNumber.replace(/[^a-zA-Z0-9_-]/g, '')}.png`,
       content: bytesToBase64(pngBytes),
@@ -381,6 +470,18 @@ Deno.serve(async (req) => {
         not_paid: notPaid,
       },
       409,
+    )
+  }
+
+  if (generateOnly) {
+    return jsonResponse(
+      {
+        ok: true,
+        generated: true,
+        generated_registration_ids: sentIds,
+        generated_count: sentIds.length,
+      },
+      200,
     )
   }
 

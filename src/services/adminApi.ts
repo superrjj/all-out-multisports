@@ -43,11 +43,55 @@ export interface AdminRiderDetailRow {
   jersey_size?: string | null
 }
 
-function normalizePaymentStatus(args: { orderStatus?: string | null; txStatus?: string | null }): PaymentStatus {
+async function invokeEdgeErrorMessage(error: unknown, responseData: unknown, fallback: string): Promise<string> {
+  const wrap = (raw: string) => {
+    const t = String(raw ?? '').trim()
+    if (!t) return fallback
+    if (!t.startsWith('{')) return t
+    try {
+      const o = JSON.parse(t) as { message?: string; error?: string }
+      return String(o.message ?? o.error ?? t)
+    } catch {
+      return t
+    }
+  }
+
+  const ctx = (error as { context?: { text?: () => Promise<string>; json?: () => Promise<unknown> } })?.context
+  if (ctx && typeof ctx.text === 'function') {
+    try {
+      const text = await ctx.text()
+      if (text?.trim()) return wrap(text)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (responseData && typeof responseData === 'object') {
+    const o = responseData as { message?: string; error?: string }
+    const inline = String(o.message ?? o.error ?? '').trim()
+    if (inline) return inline
+  }
+
+  const msg = (error as { message?: string } | null)?.message
+  return msg?.trim() ? msg.trim() : fallback
+}
+
+/** Matches `tally-import-{submissionId}-{criterium|individual-time-trial}` from CSV import rows. */
+function extractTallyImportSubmissionId(merchantReference: string | null | undefined): string | null {
+  const mr = String(merchantReference ?? '')
+  const m = mr.match(/^tally-import-(.+)-(criterium|individual-time-trial)$/)
+  return m ? m[1] : null
+}
+
+function normalizePaymentStatus(args: { orderStatus?: string | null; txStatus?: string | null; registrationStatus?: string | null }): PaymentStatus {
   const order = String(args.orderStatus ?? '').toLowerCase()
   const tx = String(args.txStatus ?? '').toLowerCase()
+  const reg = String(args.registrationStatus ?? '').toLowerCase()
   const s = tx || order
-  if (['paid', 'succeeded', 'success'].includes(s)) return 'paid'
+  if (['paid', 'succeeded', 'success', 'completed', 'complete', 'confirmed'].includes(s)) return 'paid'
+  // Import flow writes registration_forms.status = confirmed.
+  // If payment rows are missing/partial, still treat imported records as paid.
+  if (reg === 'confirmed') return 'paid'
   if (['pending', 'processing', 'created'].includes(s)) return 'pending'
   if (['failed', 'cancelled', 'canceled', 'expired'].includes(s)) return 'failed'
   if (['refunded'].includes(s)) return 'refunded'
@@ -132,6 +176,14 @@ export const adminApi = {
       if (!latestOrderByReg.has(o.registration_id)) latestOrderByReg.set(o.registration_id, o)
     }
 
+    // Bundle import: second registration has provider_reference=null (unique constraint). Share pay_ via Tally submission id.
+    const payIdByTallySubmission = new Map<string, string>()
+    for (const o of orders ?? []) {
+      const sid = extractTallyImportSubmissionId(o.merchant_reference ?? null)
+      const pref = String(o.provider_reference ?? '').trim()
+      if (sid && pref.startsWith('pay_')) payIdByTallySubmission.set(sid, pref)
+    }
+
     const bundleIdsForFallback = Array.from(
       new Set(
         base
@@ -161,18 +213,22 @@ export const adminApi = {
 
     // 3) Latest transaction per latest payment order
     const orderIds = Array.from(latestOrderByReg.values()).map((o) => o.id)
-    let latestTxByOrder = new Map<string, { status?: string | null; paid_at?: string | null }>()
+    let latestTxByOrder = new Map<string, { status?: string | null; paid_at?: string | null; provider_reference?: string | null }>()
     if (orderIds.length > 0) {
       const { data: txs, error: txsError } = await supabase
         .from('payment_transactions')
-        .select('payment_order_id, status, paid_at, created_at')
+        .select('payment_order_id, status, paid_at, provider_reference, created_at')
         .in('payment_order_id', orderIds)
         .order('created_at', { ascending: false })
 
       if (txsError) throw txsError
       for (const t of txs ?? []) {
         if (!latestTxByOrder.has(t.payment_order_id)) {
-          latestTxByOrder.set(t.payment_order_id, { status: t.status, paid_at: t.paid_at })
+          latestTxByOrder.set(t.payment_order_id, {
+            status: t.status,
+            paid_at: t.paid_at,
+            provider_reference: t.provider_reference ?? null,
+          })
         }
       }
     }
@@ -180,10 +236,20 @@ export const adminApi = {
     return base.map((f) => {
       const order = latestOrderByReg.get(f.id)
       const tx = order ? latestTxByOrder.get(order.id) : undefined
-      const payment_status = normalizePaymentStatus({ orderStatus: order?.status, txStatus: tx?.status })
+      const payment_status = normalizePaymentStatus({ orderStatus: order?.status, txStatus: tx?.status, registrationStatus: f.status })
       const rider = riderByReg.get(f.id)
       const riderFullName = [rider?.first_name, rider?.last_name].filter(Boolean).join(' ').trim()
       const ev = f.event_id ? eventById.get(String(f.event_id)) : undefined
+
+      let providerRef = order?.provider_reference ?? tx?.provider_reference ?? null
+      if (!providerRef && order?.merchant_reference) {
+        const sid = extractTallyImportSubmissionId(order.merchant_reference)
+        if (sid) {
+          const shared = payIdByTallySubmission.get(sid)
+          if (shared) providerRef = shared
+        }
+      }
+
       return {
         id: f.id,
         created_at: f.created_at,
@@ -203,7 +269,7 @@ export const adminApi = {
         payment_order_status: order?.status ?? null,
         payment_order_id: order?.id ?? null,
         merchant_reference: order?.merchant_reference ?? null,
-        provider_reference: order?.provider_reference ?? null,
+        provider_reference: providerRef,
         paid_at: tx?.paid_at ?? null,
         user_id: f.user_id ?? null,
         race_category_id: f.race_category_id ?? null,
@@ -265,7 +331,11 @@ export const adminApi = {
 
     if (txError) throw txError
 
-    const payment_status = normalizePaymentStatus({ orderStatus: order?.status ?? null, txStatus: tx?.status ?? null })
+    const payment_status = normalizePaymentStatus({
+      orderStatus: order?.status ?? null,
+      txStatus: tx?.status ?? null,
+      registrationStatus: reg?.status ?? null,
+    })
 
     const evId = reg?.event_id ? String(reg.event_id) : null
     const { data: ev, error: evError } = evId
@@ -297,5 +367,29 @@ export const adminApi = {
       paymentOrder: order,
       paymentTransaction: tx,
     }
+  },
+
+  async adminGenerateBib(registrationId: string) {
+    const { data, error } = await supabase.functions.invoke('admin-generate-bib', {
+      body: { registrationId },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not assign bib.'))
+    return data as { ok: boolean; bib_number?: string; provider_reference?: string; error?: string }
+  },
+
+  async adminSendRaceKitEmail(registrationId: string) {
+    const { data, error } = await supabase.functions.invoke('send-race-claim-certificate-email', {
+      body: { registrationId, registrationIds: [registrationId], adminSend: true, forceResend: true },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not send email.'))
+    return data as { ok: boolean; sent_count?: number; error?: string }
+  },
+
+  async adminGenerateRaceKitCertificate(registrationId: string) {
+    const { data, error } = await supabase.functions.invoke('send-race-claim-certificate-email', {
+      body: { registrationId, registrationIds: [registrationId], adminSend: true, forceResend: false, generateOnly: true },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not generate certificate file.'))
+    return data as { ok: boolean; generated_count?: number; error?: string }
   },
 }

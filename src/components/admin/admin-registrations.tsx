@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Printer, Search, ShieldX, Users, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Mail, Printer, Search, ShieldX, Users, X } from 'lucide-react'
+import { ImportParticipantsModal } from './admin-participant-modal'
+import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
 
 function formatEventTypeSlugLabel(slug: string | null | undefined) {
   const raw = String(slug ?? '').trim()
@@ -23,6 +25,29 @@ function pill(status: string) {
   return 'bg-slate-100 text-slate-700'
 }
 
+/** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
+function isPaymongoPaymentReferenceId(raw: string) {
+  const v = normalizePaymentReferenceDisplay(raw)
+  return v.startsWith('pay_')
+}
+
+/** Strip accidental event-type suffixes from stored refs (legacy import appended `-criterium` / `-individual-time-trial`). */
+function normalizePaymentReferenceDisplay(raw: string): string {
+  let v = String(raw ?? '').trim()
+  if (!v) return ''
+  v = v.replace(/-individual-time-trial$/i, '')
+  v = v.replace(/-criterium$/i, '')
+  v = v.replace(/-individual-?$/i, '')
+  v = v.replace(/-individual$/i, '')
+  return v.trim()
+}
+
+function extractTallySubmissionFromMerchantReference(raw: string): string {
+  const mr = String(raw ?? '').trim()
+  const m = mr.match(/^tally-import-(.+)-(criterium|individual-time-trial)$/i)
+  return m ? String(m[1]) : ''
+}
+
 function SkeletonRow() {
   return (
     <tr className="animate-pulse">
@@ -34,10 +59,6 @@ function SkeletonRow() {
       <td className="py-3 pr-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
       <td className="py-3 pr-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
       <td className="py-3 pr-3"><div className="h-3 w-24 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3">
-        <div className="h-3 w-20 rounded bg-slate-200 mb-1.5" />
-        <div className="h-2.5 w-16 rounded bg-slate-100" />
-      </td>
       <td className="py-3 pr-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
       <td className="py-3 pr-3"><div className="h-3 w-24 rounded bg-slate-200" /></td>
       <td className="py-3 pr-3"><div className="h-3 w-10 rounded bg-slate-200" /></td>
@@ -77,6 +98,7 @@ export function AdminRegistrations() {
   const [sortBy, setSortBy] = useState<'created_desc' | 'created_asc' | 'cyclist_asc' | 'cyclist_desc'>('created_desc')
   const [page, setPage] = useState(1)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [ledgerOpen, setLedgerOpen] = useState(false)
   const [ledgerEventId, setLedgerEventId] = useState('')
   const [ledgerDiscipline, setLedgerDiscipline] = useState('all')
@@ -86,6 +108,11 @@ export function AdminRegistrations() {
   const [ledgerRows, setLedgerRows] = useState<BibLedgerRow[]>([])
   const [ledgerLoading, setLedgerLoading] = useState(false)
   const [ledgerError, setLedgerError] = useState('')
+  const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | null>>({})
+  type AdminActionBanner = { text: string; tone: 'info' | 'success' | 'warning' | 'error' }
+  const [actionBanner, setActionBanner] = useState<AdminActionBanner | null>(null)
+  /** Prevents overlapping auto-bib requests and duplicate effect runs tied to loading state updates. */
+  const autobibQueuedRef = useRef<Set<string>>(new Set())
 
   function fetchData() {
     return adminApi
@@ -124,6 +151,24 @@ export function AdminRegistrations() {
     () => Array.from(new Set(rows.map((r) => String(r.age_category ?? '').trim()).filter(Boolean))),
     [rows],
   )
+  const sharedPayIdByTallySubmission = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const r of rows) {
+      const sid = extractTallySubmissionFromMerchantReference(String(r.merchant_reference ?? ''))
+      if (!sid) continue
+      const pref = normalizePaymentReferenceDisplay(String(r.provider_reference ?? ''))
+      if (pref.startsWith('pay_')) out.set(sid, pref)
+    }
+    return out
+  }, [rows])
+
+  const getEffectiveProviderReference = (row: AdminRegistrationRow) => {
+    const direct = normalizePaymentReferenceDisplay(String(row.provider_reference ?? ''))
+    if (direct.startsWith('pay_')) return direct
+    const sid = extractTallySubmissionFromMerchantReference(String(row.merchant_reference ?? ''))
+    if (!sid) return direct
+    return sharedPayIdByTallySubmission.get(sid) ?? direct
+  }
   const ledgerEventOptions = useMemo(() => {
     const byId = new Map<string, string>()
     for (const row of rows) {
@@ -288,6 +333,118 @@ export function AdminRegistrations() {
     return () => { active = false }
   }, [ledgerOpen, ledgerEventId, ledgerDiscipline, ledgerCategoryId, ledgerCategoryOptions])
 
+  async function handleSendQr(registrationId: string) {
+    setRowActionLoading((prev) => ({ ...prev, [registrationId]: 'email' }))
+    setActionBanner(null)
+    try {
+      const result = await adminApi.adminSendRaceKitEmail(registrationId)
+      if (result?.error) throw new Error(result.error)
+      setActionBanner({
+        text: `QR code email sent for registration ${registrationId.slice(0, 8)}.`,
+        tone: 'success',
+      })
+    } catch (e) {
+      setActionBanner({ text: (e as Error).message || 'Failed to send QR code email.', tone: 'error' })
+    } finally {
+      setRowActionLoading((prev) => ({ ...prev, [registrationId]: null }))
+    }
+  }
+
+  useEffect(() => {
+    const candidates = rows.filter((r) => {
+      const paid = String(r.payment_status ?? '').toLowerCase() === 'paid'
+      const hasReferenceNo = isPaymongoPaymentReferenceId(getEffectiveProviderReference(r))
+      const hasBib = String(r.bib_number ?? '').trim().length > 0
+      return paid && hasReferenceNo && !hasBib && !autobibQueuedRef.current.has(r.id)
+    })
+    if (candidates.length === 0) return
+
+    let cancelled = false
+
+    void (async () => {
+      let successCount = 0
+      const failures: { label: string; message: string }[] = []
+      const certificateFailures: { label: string; message: string }[] = []
+
+      for (const row of candidates) {
+        if (cancelled) return
+        autobibQueuedRef.current.add(row.id)
+        setRowActionLoading((prev) => ({ ...prev, [row.id]: 'autobib' }))
+        const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
+        try {
+          const result = await adminApi.adminGenerateBib(row.id)
+          if (result?.error) throw new Error(result.error)
+          const nextBib = String(result?.bib_number ?? '').trim()
+          if (!nextBib) throw new Error('Edge function succeeded but bib number was empty (check race category / bib class setup).')
+
+          try {
+            await generateAndUploadAdminCertificate(row.id)
+          } catch (certErr) {
+            certificateFailures.push({
+              label,
+              message: (certErr as Error).message || 'Certificate file was not generated.',
+            })
+          }
+
+          successCount += 1
+          if (!cancelled) {
+            setRows((prev) =>
+              prev.map((item) =>
+                item.id === row.id
+                  ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
+                  : item,
+              ),
+            )
+          }
+        } catch (e) {
+          failures.push({
+            label,
+            message: (e as Error).message || 'Failed to auto-generate bib number.',
+          })
+        } finally {
+          autobibQueuedRef.current.delete(row.id)
+          setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
+        }
+      }
+
+      if (cancelled) return
+
+      if (failures.length === 0 && successCount > 0) {
+        const certNote =
+          certificateFailures.length > 0
+            ? ` Certificate storage pending for ${certificateFailures.length} rider(s).`
+            : ''
+        setActionBanner({
+          text: `Auto-assigned bib numbers for ${successCount} registration${successCount === 1 ? '' : 's'}.${certNote}`,
+          tone: certificateFailures.length > 0 ? 'warning' : 'success',
+        })
+      } else if (failures.length > 0 && successCount > 0) {
+        const preview = failures
+          .slice(0, 2)
+          .map((f) => `${f.label} — ${f.message}`)
+          .join(' ')
+        setActionBanner({
+          text: `Assigned bibs for ${successCount} rider(s). ${failures.length} still need attention: ${preview}${failures.length > 2 ? ` (+${failures.length - 2} more)` : ''}`,
+          tone: 'warning',
+        })
+      } else if (failures.length > 0) {
+        setActionBanner({
+          text: failures
+            .slice(0, 3)
+            .map((f) => `${f.label}: ${f.message}`)
+            .join(' · ') + (failures.length > 3 ? ` (+${failures.length - 3} more)` : ''),
+          tone: 'error',
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // Important: do not depend on rowActionLoading — updating it aborted the prior effect and skipped `finally`,
+    // leaving rows stuck on "Generating…".
+  }, [rows])
+
   return (
     <div className="space-y-4">
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -297,7 +454,11 @@ export function AdminRegistrations() {
             <p className="text-sm text-slate-500">Manage and monitor all event registrations</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
               <Users className="h-3.5 w-3.5" />
               Import Participants
             </button>
@@ -365,9 +526,24 @@ export function AdminRegistrations() {
         </div>
 
         {error ? <p className="px-4 py-3 text-sm text-rose-600">{error}</p> : null}
+        {actionBanner ? (
+          <p
+            className={`mx-4 mb-2 rounded-md px-3 py-2 text-xs ${
+              actionBanner.tone === 'success'
+                ? 'bg-emerald-50 text-emerald-900'
+                : actionBanner.tone === 'warning'
+                  ? 'bg-amber-50 text-amber-950'
+                  : actionBanner.tone === 'error'
+                    ? 'bg-rose-50 text-rose-800'
+                    : 'bg-slate-50 text-slate-700'
+            }`}
+          >
+            {actionBanner.text}
+          </p>
+        ) : null}
 
         <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-          <table className="min-w-[1320px] w-full text-left text-sm">
+          <table className="min-w-[1180px] w-full text-left text-sm">
             <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500">
               <tr>
                 <th className="py-3 pl-4 pr-3 font-semibold">Rider Name</th>
@@ -375,7 +551,6 @@ export function AdminRegistrations() {
                 <th className="py-3 pr-3 font-semibold">Category</th>
                 <th className="py-3 pr-3 font-semibold">Discipline</th>
                 <th className="py-3 pr-3 font-semibold">Team</th>
-                <th className="py-3 pr-3 font-semibold">Registration Date</th>
                 <th className="py-3 pr-3 font-semibold">Payment Status</th>
                 <th className="py-3 pr-3 font-semibold">Reference No.</th>
                 <th className="py-3 pr-3 font-semibold">Bib Number</th>
@@ -387,7 +562,7 @@ export function AdminRegistrations() {
                 Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td className="py-12 text-center" colSpan={10}>
+                  <td className="py-12 text-center" colSpan={9}>
                     <div className="flex flex-col items-center gap-2 text-slate-400">
                       <Users className="h-8 w-8 opacity-40" />
                       <p className="text-sm font-medium">No registrations found.</p>
@@ -401,7 +576,10 @@ export function AdminRegistrations() {
                   const isPaid = payment.toLowerCase() === 'paid'
                   const dupKey = `${String(r.registrant_email ?? '').toLowerCase()}|${String(r.event_title ?? '')}|${String(r.race_category_id ?? r.age_category ?? '')}|${String(r.entry_event_type_label ?? '').toLowerCase()}`
                   const showDupWarning = !isPaid && duplicateNonPaidKeys.has(dupKey)
-                  const referenceNo = (r.provider_reference ?? '').trim()
+                  const providerRef = getEffectiveProviderReference(r)
+                  const referenceNo = isPaymongoPaymentReferenceId(providerRef)
+                    ? providerRef
+                    : ''
                   return (
                     <tr key={r.id} className="text-slate-800 transition-colors hover:bg-slate-50/70">
                       <td className="py-3 pl-4 pr-3">
@@ -410,17 +588,11 @@ export function AdminRegistrations() {
                       </td>
                       <td className="py-3 pr-3 text-xs">
                         <p className="font-medium text-slate-900">{r.event_title ?? r.race_type ?? '-'}</p>
-                        {r.entry_event_type_label ? (
-                          <p className="mt-0.5 text-[10px] text-slate-500">{r.entry_event_type_label}</p>
-                        ) : null}
+                        <p className="text-[11px] text-slate-500">{r.entry_event_type_label ?? formatEventTypeSlugLabel(r.entry_event_type_slug)}</p>
                       </td>
                       <td className="py-3 pr-3 text-xs">{r.age_category ?? '-'}</td>
                       <td className="py-3 pr-3 text-xs">{r.discipline ?? '-'}</td>
                       <td className="py-3 pr-3 text-xs">{r.team_name ?? '-'}</td>
-                      <td className="py-3 pr-3 text-xs text-slate-600">
-                        {r.created_at ? new Date(r.created_at).toLocaleDateString() : '-'}
-                        <p className="text-[10px] text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleTimeString() : ''}</p>
-                      </td>
                       <td className="py-3 pr-3">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase ${pill(payment)}`}>
                           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
@@ -428,26 +600,24 @@ export function AdminRegistrations() {
                         </span>
                       </td>
                       <td className="py-3 pr-3 text-xs">
-                        {isPaid ? (
+                        {referenceNo ? (
                           <span className="inline-flex items-center gap-1.5">
-                            <span className="font-semibold text-emerald-700">{referenceNo || '-'}</span>
-                            {referenceNo ? (
-                              <span
-                                title={copiedId === r.id ? 'Copied!' : 'Copy reference number'}
-                                onClick={() => {
-                                  void navigator.clipboard.writeText(referenceNo)
-                                  setCopiedId(r.id)
-                                  setTimeout(() => setCopiedId(null), 2000)
-                                }}
-                                className="cursor-pointer"
-                              >
-                                {copiedId === r.id ? (
-                                  <Check className="h-3 w-3 shrink-0 text-emerald-500 transition-colors" />
-                                ) : (
-                                  <Copy className="h-3 w-3 shrink-0 text-slate-400 hover:text-slate-600 transition-colors" />
-                                )}
-                              </span>
-                            ) : null}
+                            <span className={isPaid ? 'font-semibold text-emerald-700' : 'font-semibold text-slate-700'}>{referenceNo}</span>
+                            <span
+                              title={copiedId === r.id ? 'Copied!' : 'Copy reference number'}
+                              onClick={() => {
+                                void navigator.clipboard.writeText(referenceNo)
+                                setCopiedId(r.id)
+                                setTimeout(() => setCopiedId(null), 2000)
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {copiedId === r.id ? (
+                                <Check className="h-3 w-3 shrink-0 text-emerald-500 transition-colors" />
+                              ) : (
+                                <Copy className="h-3 w-3 shrink-0 text-slate-400 hover:text-slate-600 transition-colors" />
+                              )}
+                            </span>
                           </span>
                         ) : (
                           <span className="text-slate-400">-</span>
@@ -461,17 +631,32 @@ export function AdminRegistrations() {
                             </span>
                           ) : null}
                           <span title={isPaid ? undefined : 'Bib is assigned only after payment is confirmed.'}>
-                            {isPaid && r.bib_number ? r.bib_number : '—'}
+                            {isPaid && r.bib_number
+                              ? r.bib_number
+                              : rowActionLoading[r.id] === 'autobib'
+                                ? 'Generating...'
+                                : '—'}
                           </span>
                         </span>
                       </td>
                       <td className="py-3 pr-4 text-right">
-                        <Link
-                          to={`/admin/registrations/${encodeURIComponent(r.id)}`}
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          View
-                        </Link>
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void handleSendQr(r.id)}
+                            disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
+                            className="inline-flex items-center gap-1 rounded-md border border-emerald-200 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+                          >
+                            <Mail className="h-3 w-3" />
+                            {rowActionLoading[r.id] === 'email' ? 'Sending…' : 'Send QR'}
+                          </button>
+                          <Link
+                            to={`/admin/registrations/${encodeURIComponent(r.id)}`}
+                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            View
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -500,6 +685,15 @@ export function AdminRegistrations() {
         </div>
       </section>
 
+      {/* Import Participants Modal */}
+      {importOpen && (
+        <ImportParticipantsModal
+          onClose={() => setImportOpen(false)}
+          onDone={() => void fetchData()}
+        />
+      )}
+
+      {/* Category Legend Modal */}
       {ledgerOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4">
           <div className="w-full max-w-4xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">

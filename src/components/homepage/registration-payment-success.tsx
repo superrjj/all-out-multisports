@@ -230,18 +230,22 @@ export function RegistrationPaymentSuccess() {
       drawLabelValue('EVENT TYPE', data.eventType, leftColX, metaY + 62, 640)
       //                                                                       ↑ increased from 52 to 62
 
-      const qrSize = 192
+      const qrSize = 224
       const qrCardWidth = Math.round(canvas.width * 0.4) - 48
       const qrCardX = leftColX + leftColWidth + 8
-      const qrPad = 24
-      // FIXED: qrCardHeight fully contains QR image + bib number + reg ID + padding
-      const qrCardHeight = qrPad + qrSize + 20 + 48 + 28 + qrPad
+      const qrPadTop = 28
+      const qrPadBottom = 28
+      const bibGap = 26
+      const regGap = 34
+      // Slightly taller card so enlarged QR + texts stay centered and balanced.
+      const qrCardHeight = qrPadTop + qrSize + bibGap + regGap + qrPadBottom
       // Center the QR card vertically (reuse usableTop/usableBottom declared above)
       const qrCardY = Math.round(usableTop + (usableBottom - usableTop - qrCardHeight) / 2)
-      const qrInnerTop = qrCardY + qrPad
+      const qrInnerTop = qrCardY + qrPadTop
       const qrImgY = qrInnerTop
       const qrImgX = qrCardX + (qrCardWidth - qrSize) / 2
-      const qrTextTop = qrImgY + qrSize + 20
+      const bibY = qrImgY + qrSize + bibGap
+      const regY = bibY + regGap
 
       const qrDataUrl = await QRCode.toDataURL(data.qrValue, {
         width: qrSize,
@@ -267,14 +271,14 @@ export function RegistrationPaymentSuccess() {
       const bibDisplay = String(data.bibNumber ?? '').trim()
 
       ctx.fillStyle = '#111827'
-      ctx.font = '900 40px Arial'
+      ctx.font = '900 44px Arial'
       const bibWidthQr = ctx.measureText(bibDisplay).width
-      ctx.fillText(bibDisplay, qrCardX + (qrCardWidth - bibWidthQr) / 2, qrTextTop + 28)
+      ctx.fillText(bibDisplay, qrCardX + (qrCardWidth - bibWidthQr) / 2, bibY)
 
       ctx.fillStyle = '#64748b'
-      ctx.font = '600 15px Arial'
+      ctx.font = '700 15px Arial'
       const regWidth = ctx.measureText(data.verificationId).width
-      ctx.fillText(data.verificationId, qrCardX + (qrCardWidth - regWidth) / 2, qrTextTop + 56)
+      ctx.fillText(data.verificationId, qrCardX + (qrCardWidth - regWidth) / 2, regY)
 
       ctx.fillStyle = '#0f172a'
       ctx.font = '900 64px Arial'
