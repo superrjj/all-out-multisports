@@ -283,7 +283,7 @@ export const adminApi = {
   async registrationDetails(registrationId: string) {
     const { data: reg, error: regError } = await supabase
       .from('registration_forms')
-      .select('id, created_at, status, registrant_email, user_id, event_id, checkout_bundle_id, entry_event_type_label')
+      .select('id, created_at, status, registrant_email, user_id, event_id, race_category_id, checkout_bundle_id, entry_event_type_slug, entry_event_type_label')
       .eq('id', registrationId)
       .maybeSingle()
 
@@ -353,7 +353,10 @@ export const adminApi = {
             id: reg.id,
             created_at: reg.created_at,
             race_type: ev?.race_type ?? null,
+            event_id: reg.event_id ?? null,
+            race_category_id: reg.race_category_id ?? null,
             entry_event_type_label: reg.entry_event_type_label ?? null,
+            entry_event_type_slug: reg.entry_event_type_slug ?? null,
             event_title: ev?.title ?? null,
             registrant_email: reg.registrant_email ?? null,
             status: reg.status ?? null,

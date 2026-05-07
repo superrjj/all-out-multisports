@@ -69,6 +69,14 @@ export async function resolveRaceCategoryIdForEvent(
   }
 
   const disc = normDiscipline(riderDiscipline)
+  // If discipline is missing and multiple disciplines share the same category label,
+  // refuse to guess (prevents wrong bib class mapping for categories like "Open Female").
+  if (!disc && pool.length > 1) {
+    const uniqueDisciplines = Array.from(
+      new Set(pool.map((c) => normDiscipline(String(c.discipline ?? ''))).filter(Boolean)),
+    )
+    if (uniqueDisciplines.length > 1) return null
+  }
   if (disc) {
     const matchDisc = pool.filter((c) => normDiscipline(String(c.discipline ?? '')) === disc)
     if (matchDisc.length) pool = matchDisc

@@ -1,8 +1,6 @@
 import { useRef, useState } from 'react'
 import { X, Upload, FileText, AlertTriangle, CheckCircle2, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase as supabaseAdmin } from '../../lib/supabase'
-import { adminApi } from '../../services/adminApi'
-import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
 
 /** Must match `events.id` in Supabase (imports attach to this event only). */
 const EVENT_ID = 'b8d4183a-2cbe-43cb-b0bd-c798d47f327e'
@@ -284,6 +282,14 @@ async function resolveRaceCategoryIdForImport(
   }
 
   const disc = normDisc(riderDiscipline)
+  // If discipline is missing and multiple disciplines share the same category label,
+  // refuse to guess (prevents wrong bib class mapping for categories like "Open Female").
+  if (!disc && pool.length > 1) {
+    const uniqueDisciplines = Array.from(
+      new Set(pool.map((c) => normDisc(String(c.discipline ?? ''))).filter(Boolean)),
+    )
+    if (uniqueDisciplines.length > 1) return null
+  }
   if (disc) {
     const matchDisc = pool.filter((c) => normDisc(String(c.discipline ?? '')) === disc)
     if (matchDisc.length) pool = matchDisc
@@ -458,39 +464,22 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
     const allResults: ImportResult[] = []
     let done = 0
 
-    async function importAndFinalize(row: ParsedRow, eventType: 'criterium' | 'itt') {
+    async function importOnly(row: ParsedRow, eventType: 'criterium' | 'itt') {
       const inserted = await insertRegistration(row, eventType)
-      if (inserted.status === 'success' && inserted.registrationId) {
-        const directProviderRef = providerReferenceForImportedLine(row, eventType)
-        const sharedBundleProviderRef = String(row.paymongoId ?? '').trim()
-        const hasPaymongoReference =
-          String(directProviderRef ?? '').trim().startsWith('pay_') || sharedBundleProviderRef.startsWith('pay_')
-        if (!hasPaymongoReference) {
-          inserted.message = 'Imported. Auto bib/certificate skipped (missing Payment ID / pay_ reference).'
-          allResults.push(inserted)
-          return
-        }
-        try {
-          const bib = await adminApi.adminGenerateBib(inserted.registrationId)
-          const bibNo = String(bib?.bib_number ?? '').trim()
-          if (!bibNo) throw new Error('Bib assignment returned empty bib number.')
-          await generateAndUploadAdminCertificate(inserted.registrationId)
-          inserted.message = `Imported, bib assigned (${bibNo}), certificate saved to storage.`
-        } catch (e) {
-          inserted.message = `Imported, but auto-finalize failed: ${(e as Error).message || 'Unknown error'}`
-        }
+      if (inserted.status === 'success') {
+        inserted.message = 'Imported successfully. Use "Auto Generate Bib" after reviewing rider details.'
       }
       allResults.push(inserted)
     }
 
     for (const row of parsed) {
       if (row.isCriterium) {
-        await importAndFinalize(row, 'criterium')
+        await importOnly(row, 'criterium')
         done++
         setProgress(Math.round((done / totalRegistrations) * 100))
       }
       if (row.isITT) {
-        await importAndFinalize(row, 'itt')
+        await importOnly(row, 'itt')
         done++
         setProgress(Math.round((done / totalRegistrations) * 100))
       }

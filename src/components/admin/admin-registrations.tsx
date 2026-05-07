@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Mail, Printer, Search, ShieldX, Users, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Mail, Printer, Search, Users, NotebookPen, X } from 'lucide-react'
 import { ImportParticipantsModal } from './admin-participant-modal'
+import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
 
 function formatEventTypeSlugLabel(slug: string | null | undefined) {
@@ -110,6 +111,8 @@ export function AdminRegistrations() {
   const [ledgerLoading, setLedgerLoading] = useState(false)
   const [ledgerError, setLedgerError] = useState('')
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | null>>({})
+  const [autobibRunning, setAutobibRunning] = useState(false)
+  const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null)
   type AdminActionBanner = { text: string; tone: 'info' | 'success' | 'warning' | 'error' }
   const [actionBanner, setActionBanner] = useState<AdminActionBanner | null>(null)
   /** Prevents overlapping auto-bib requests and duplicate effect runs tied to loading state updates. */
@@ -542,100 +545,101 @@ export function AdminRegistrations() {
     }
   }
 
-  useEffect(() => {
+  async function handleAutoGenerateBibForMissingRows() {
+    if (autobibRunning) return
     const candidates = rows.filter((r) => {
-      const paid = String(r.payment_status ?? '').toLowerCase() === 'paid'
-      const hasReferenceNo = isPaymongoPaymentReferenceId(getEffectiveProviderReference(r))
       const hasBib = String(r.bib_number ?? '').trim().length > 0
-      return paid && hasReferenceNo && !hasBib && !autobibQueuedRef.current.has(r.id)
+      const hasReferenceNo = isPaymongoPaymentReferenceId(getEffectiveProviderReference(r))
+      return !hasBib && hasReferenceNo && !autobibQueuedRef.current.has(r.id)
     })
-    if (candidates.length === 0) return
 
-    let cancelled = false
-
-    void (async () => {
-      let successCount = 0
-      const failures: { label: string; message: string }[] = []
-      const certificateFailures: { label: string; message: string }[] = []
-
-      for (const row of candidates) {
-        if (cancelled) return
-        autobibQueuedRef.current.add(row.id)
-        setRowActionLoading((prev) => ({ ...prev, [row.id]: 'autobib' }))
-        const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
-        try {
-          const result = await adminApi.adminGenerateBib(row.id)
-          if (result?.error) throw new Error(result.error)
-          const nextBib = String(result?.bib_number ?? '').trim()
-          if (!nextBib) throw new Error('Edge function succeeded but bib number was empty (check race category / bib class setup).')
-
-          try {
-            await generateAndUploadAdminCertificate(row.id)
-          } catch (certErr) {
-            certificateFailures.push({
-              label,
-              message: (certErr as Error).message || 'Certificate file was not generated.',
-            })
-          }
-
-          successCount += 1
-          if (!cancelled) {
-            setRows((prev) =>
-              prev.map((item) =>
-                item.id === row.id
-                  ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
-                  : item,
-              ),
-            )
-          }
-        } catch (e) {
-          failures.push({
-            label,
-            message: (e as Error).message || 'Failed to auto-generate bib number.',
-          })
-        } finally {
-          autobibQueuedRef.current.delete(row.id)
-          setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
-        }
-      }
-
-      if (cancelled) return
-
-      if (failures.length === 0 && successCount > 0) {
-        const certNote =
-          certificateFailures.length > 0
-            ? ` Certificate storage pending for ${certificateFailures.length} rider(s).`
-            : ''
-        setActionBanner({
-          text: `Auto-assigned bib numbers for ${successCount} registration${successCount === 1 ? '' : 's'}.${certNote}`,
-          tone: certificateFailures.length > 0 ? 'warning' : 'success',
-        })
-      } else if (failures.length > 0 && successCount > 0) {
-        const preview = failures
-          .slice(0, 2)
-          .map((f) => `${f.label} — ${f.message}`)
-          .join(' ')
-        setActionBanner({
-          text: `Assigned bibs for ${successCount} rider(s). ${failures.length} still need attention: ${preview}${failures.length > 2 ? ` (+${failures.length - 2} more)` : ''}`,
-          tone: 'warning',
-        })
-      } else if (failures.length > 0) {
-        setActionBanner({
-          text: failures
-            .slice(0, 3)
-            .map((f) => `${f.label}: ${f.message}`)
-            .join(' · ') + (failures.length > 3 ? ` (+${failures.length - 3} more)` : ''),
-          tone: 'error',
-        })
-      }
-    })()
-
-    return () => {
-      cancelled = true
+    if (candidates.length === 0) {
+      setActionBanner({
+        text: 'No eligible registrations found. Bibs are generated only for rows without bib numbers and with a valid PayMongo Reference No. (pay_...).',
+        tone: 'info',
+      })
+      return
     }
-    // Important: do not depend on rowActionLoading — updating it aborted the prior effect and skipped `finally`,
-    // leaving rows stuck on "Generating…".
-  }, [rows])
+
+    setAutobibRunning(true)
+    setActionBanner({
+      text: `Generating bib numbers for ${candidates.length} registration(s)...`,
+      tone: 'info',
+    })
+
+    let successCount = 0
+    const failures: { label: string; message: string }[] = []
+    const certificateFailures: { label: string; message: string }[] = []
+
+    for (const row of candidates) {
+      autobibQueuedRef.current.add(row.id)
+      setRowActionLoading((prev) => ({ ...prev, [row.id]: 'autobib' }))
+      const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
+
+      try {
+        const result = await adminApi.adminGenerateBib(row.id)
+        if (result?.error) throw new Error(result.error)
+        const nextBib = String(result?.bib_number ?? '').trim()
+        if (!nextBib) throw new Error('Bib assignment returned empty bib number.')
+
+        try {
+          await generateAndUploadAdminCertificate(row.id)
+        } catch (certErr) {
+          certificateFailures.push({
+            label,
+            message: (certErr as Error).message || 'Certificate file was not generated.',
+          })
+        }
+
+        successCount += 1
+        setRows((prev) =>
+          prev.map((item) =>
+            item.id === row.id
+              ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
+              : item,
+          ),
+        )
+      } catch (e) {
+        failures.push({
+          label,
+          message: (e as Error).message || 'Failed to generate bib number.',
+        })
+      } finally {
+        autobibQueuedRef.current.delete(row.id)
+        setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
+      }
+    }
+
+    setAutobibRunning(false)
+
+    if (failures.length === 0 && successCount > 0) {
+      const certNote =
+        certificateFailures.length > 0
+          ? ` Certificate storage pending for ${certificateFailures.length} rider(s).`
+          : ''
+      setActionBanner({
+        text: `Generated bib numbers for ${successCount} registration${successCount === 1 ? '' : 's'}.${certNote}`,
+        tone: certificateFailures.length > 0 ? 'warning' : 'success',
+      })
+    } else if (failures.length > 0 && successCount > 0) {
+      const preview = failures
+        .slice(0, 2)
+        .map((f) => `${f.label} — ${f.message}`)
+        .join(' ')
+      setActionBanner({
+        text: `Generated bibs for ${successCount} rider(s). ${failures.length} failed: ${preview}${failures.length > 2 ? ` (+${failures.length - 2} more)` : ''}`,
+        tone: 'warning',
+      })
+    } else if (failures.length > 0) {
+      setActionBanner({
+        text: failures
+          .slice(0, 3)
+          .map((f) => `${f.label}: ${f.message}`)
+          .join(' · ') + (failures.length > 3 ? ` (+${failures.length - 3} more)` : ''),
+        tone: 'error',
+      })
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -670,9 +674,14 @@ export function AdminRegistrations() {
               <ClipboardList className="h-3.5 w-3.5" />
               View Legend
             </button>
-            <button type="button" className="inline-flex items-center gap-2 rounded-lg bg-[#1e4a8e] px-3 py-2 text-xs font-semibold text-white hover:bg-[#163b72]">
-              <ShieldX className="h-3.5 w-3.5" />
-              Assign Manual Bib
+            <button
+              type="button"
+              onClick={() => { void handleAutoGenerateBibForMissingRows() }}
+              disabled={autobibRunning}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#1e4a8e] px-3 py-2 text-xs font-semibold text-white hover:bg-[#163b72] disabled:opacity-60"
+            >
+              <NotebookPen className="h-3.5 w-3.5" />
+              {autobibRunning ? 'Generating Bibs...' : 'Auto Generate Bib'}
             </button>
           </div>
         </div>
@@ -788,7 +797,7 @@ export function AdminRegistrations() {
                       </td>
                       <td className="py-3 pr-3 text-xs">{r.age_category ?? '-'}</td>
                       <td className="py-3 pr-3 text-xs">{r.discipline ?? '-'}</td>
-                      <td className="py-3 pr-3 text-xs">{r.team_name ?? '-'}</td>
+                      <td className="py-3 pr-3 text-xs">{r.team_name ?? 'N/A'}</td>
                       <td className="py-3 pr-3">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase ${pill(payment)}`}>
                           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
@@ -846,6 +855,13 @@ export function AdminRegistrations() {
                             <Mail className="h-3 w-3" />
                             {rowActionLoading[r.id] === 'email' ? 'Sending…' : 'Send QR'}
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingRegistrationId(r.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-sky-200 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-50"
+                          >
+                            Edit
+                          </button>
                           <Link
                             to={`/admin/registrations/${encodeURIComponent(r.id)}`}
                             className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -886,6 +902,14 @@ export function AdminRegistrations() {
         <ImportParticipantsModal
           onClose={() => setImportOpen(false)}
           onDone={() => void fetchData()}
+        />
+      )}
+
+      {editingRegistrationId && (
+        <AdminRegistrationEditModal
+          registrationId={editingRegistrationId}
+          onClose={() => setEditingRegistrationId(null)}
+          onSaved={() => void fetchData()}
         />
       )}
 
