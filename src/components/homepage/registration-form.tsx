@@ -177,15 +177,6 @@ function disciplineHasFemaleSpecificCategory(categories: RaceCategory[]): boolea
  * Used to sort discipline groups dynamically — whichever discipline had its first category
  * created earliest appears first. No hardcoded order.
  */
-function minCategoryCreatedAtMs(cats: RaceCategory[]): number {
-  let m = Infinity
-  for (const c of cats) {
-    if (!c.created_at) continue
-    const t = new Date(c.created_at).getTime()
-    if (!Number.isNaN(t) && t < m) m = t
-  }
-  return m === Infinity ? Number.MAX_SAFE_INTEGER : m
-}
 
 function categoryMatchesRiderGenderInDiscipline(
   cat: RaceCategory,
