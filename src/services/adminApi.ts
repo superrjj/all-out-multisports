@@ -426,6 +426,24 @@ export const adminApi = {
     return data as { ok: boolean; sent_count?: number; error?: string }
   },
 
+  /** Hard-delete a single unpaid checkout row; server enforces pending rules and 10-minute window. */
+  async adminDeletePendingRegistration(registrationId: string) {
+    const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
+      body: { registrationId },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not delete registration.'))
+    return data as { ok?: boolean; error?: string }
+  },
+
+  /** Removes abandoned `pending_payment` / `payment_processing` registrations older than 10 minutes (service-side rules). */
+  async adminPurgeStalePendingRegistrations() {
+    const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
+      body: { purgeStaleOnly: true },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not purge stale registrations.'))
+    return data as { ok?: boolean; purged_count?: number; errors?: string[]; error?: string }
+  },
+
   async adminGenerateRaceKitCertificate(registrationId: string) {
     const { data, error } = await supabase.functions.invoke('send-race-claim-certificate-email', {
       body: { registrationId, registrationIds: [registrationId], adminSend: true, forceResend: false, generateOnly: true },
