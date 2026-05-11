@@ -863,8 +863,7 @@ export function RegistrationForm() {
             </p>
             {!form.gender.trim() ? (
               <p className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                Select your <strong>gender</strong> first — only disciplines and categories that match eligibility will
-                appear.
+                Select your gender first to see the categories available to you.
               </p>
             ) : null}
           </div>
@@ -896,7 +895,7 @@ export function RegistrationForm() {
               if (!noGender && disciplineGroupsForRider.length === 0) {
                 return (
                   <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
-                    No disciplines or categories are available for <strong>{form.gender}</strong> riders in this event. Please contact the organizer.
+                    No categories are available for {form.gender} riders in this event. Please get in touch with the organizer for assistance.
                   </p>
                 )
               }
@@ -959,14 +958,14 @@ export function RegistrationForm() {
                     {/* Friendly message for female riders when there are no age brackets — no jargon */}
                     {!noGender && form.gender.trim().toLowerCase() === 'female' && !hasAgeCategories && visibleCategories.length > 0 && (
                       <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700">
-                        There's <strong>one category for women</strong> in this discipline — just select it below. It covers all event types you pick.
+                        There's one category for women in this discipline — select it below and it'll apply to all event types you choose.
                       </p>
                     )}
 
                     {!noGender && form.gender && visibleCategories.length === 0 && (
-                      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-                        No categories are set up for <strong>{form.gender}</strong> riders in this discipline. Try switching to another discipline or contact the organizer.
-                      </p>
+                     <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                      No categories available for {form.gender} riders in this discipline. Try another discipline or reach out to the organizer for help.
+                    </p>
                     )}
 
                     <div className={`grid grid-cols-1 gap-2 sm:grid-cols-2 rounded-xl border p-3 ${fieldErrors.category ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
@@ -1014,8 +1013,8 @@ export function RegistrationForm() {
                     {/* Prompt to select gender when no gender yet */}
                     {noGender && (
                       <p className="text-xs text-slate-500">
-                        Select your <strong>gender</strong> above to enable category selection.
-                      </p>
+                      Select your gender above to see available categories.
+                    </p>
                     )}
 
                     {fieldErrors.category && (
@@ -1030,16 +1029,15 @@ export function RegistrationForm() {
           {hasAgeCategories && form.birthDate && suggestedAgeCategory && (
             <div className="flex flex-col gap-2 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3.5">
               <div className="flex items-start gap-2.5">
-                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
-                  ℹ
-                </span>
-                <div className="text-xs text-slate-700 leading-relaxed">
-                  Based on your date of birth, your race age on Dec 31, {new Date().getFullYear()} is{' '}
-                  <span className="font-bold text-slate-900">{raceAge}</span>.{' '}
-                  Suggested category:{' '}
-                  <span className="font-bold text-blue-800">{suggestedAgeCategory}</span>
-                </div>
+              <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-700 text-xs font-bold">
+                ℹ
+              </span>
+              <div className="text-xs text-slate-700 leading-relaxed">
+                You'll be racing as age <span className="font-bold text-slate-900">{raceAge}</span> this year.
+                Based on that, we suggest:{' '}
+                <span className="font-bold text-blue-800">{suggestedAgeCategory}</span>
               </div>
+            </div>
               <div className="pl-8">
                 {!selectedCategoryLabels.includes(suggestedAgeCategory) ? (
                   <button

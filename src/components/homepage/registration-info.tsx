@@ -382,8 +382,8 @@ export function RegistrationInfo() {
               <span className="text-xs text-slate-500">Current</span>
             </div>
             <p className="text-xs text-slate-500">
-              *Slots are limited to ensure a safe and manageable race experience for all participants*
-            </p>
+            Slots are limited — register early to secure your spot.
+          </p>
           </section>
         )}
 
@@ -401,7 +401,7 @@ export function RegistrationInfo() {
           {!categoriesLoading && categoriesError && <p className="text-sm text-rose-600">{categoriesError}</p>}
 
           {!categoriesLoading && !categoriesError && disciplineGroups.length === 0 && selectedEvent && (
-            <p className="text-sm italic text-slate-500">No categories have been configured for this event yet.</p>
+            <p className="text-sm italic text-slate-500">Categories haven't been set up for this event yet. Check back soon.</p>
           )}
 
           {!categoriesLoading && disciplineGroups.length > 0 && (

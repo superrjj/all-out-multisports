@@ -453,20 +453,19 @@ export function RegistrationPaymentSuccess() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Payment successful</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-emerald-900 sm:text-3xl">
-            Registration payment received
+            You're registered!
           </h1>
-          <p className="mt-2 text-sm text-emerald-800">
-            Thank you! Your payment was submitted to PayMongo successfully. Your registration is finalized immediately
-            and your race certificate is now available.
-          </p>
+         <p className="mt-2 text-sm text-emerald-800">
+          You're all set! Your registration is confirmed and your race certificate is ready to download.
+        </p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-sm font-semibold text-slate-900">What happens next?</h2>
           <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-700">
-            <li>Payment is marked as paid in your registration record.</li>
-            <li>Your QR race certificate is generated from your rider information.</li>
-            <li>You can preview and download your QR certificate.</li>
+            <li>Your payment is confirmed.</li>
+            <li>Your race certificate is generated with your rider details.</li>
+            <li>You can preview and download your certificate anytime.</li>
           </ol>
         </div>
 
@@ -487,8 +486,7 @@ export function RegistrationPaymentSuccess() {
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
               <p className="font-semibold">Log in to assign your race bib</p>
               <p className="mt-1 text-amber-900">
-                Payment can be confirmed in PayMongo before your bib is written. Finalizing requires the same account you
-                used to register.
+                Your bib is being finalized. This usually only takes a moment.
               </p>
               <Link
                 to={`/auth?redirect=${encodeURIComponent(`/register/payment-success?registrationId=${encodeURIComponent(registrationId)}`)}`}
@@ -502,7 +500,7 @@ export function RegistrationPaymentSuccess() {
           {certificateData?.isPaid && !certificateData?.bibNumber?.trim() && session?.access_token ? (
             <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950">
               <p>
-                Bib not showing yet? Payment may still be syncing.{' '}
+               Bib not showing yet? It may take a moment to sync.{' '}
                 <button
                   type="button"
                   className="font-semibold text-sky-800 underline hover:text-sky-950"
@@ -612,7 +610,7 @@ export function RegistrationPaymentSuccess() {
 
               {previewRows.length > 1 ? (
                 <p className="text-xs text-slate-500">
-                  One certificate preview per event type and category you registered for in this payment.
+                  A certificate will be available for each event type and category you registered for.
                 </p>
               ) : null}
 
