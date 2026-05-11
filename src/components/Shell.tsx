@@ -12,7 +12,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <footer className="border-t border-slate-200 bg-slate-50/80 py-3 text-xs text-slate-500 backdrop-blur-sm">
         <div className="mx-auto flex max-w-5xl items-center justify-center px-4">
           <span className="rounded-full bg-white/80 px-4 py-1 shadow-sm shadow-slate-200">
-            Developed by <span className="font-medium text-slate-800">John Harvee Quirido (Team RCC)</span>
+            Developed by <span className="font-medium text-slate-800">John Harvee Quirido (Team D&R Marging Racing)</span>
           </span>
         </div>
       </footer>
