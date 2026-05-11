@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Eye, Loader2, Mail, NotebookPen, Pencil, Printer, Search, Users, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Loader2, Mail, MoreVertical, NotebookPen, Pencil, Printer, Search, Trash2, Users, X } from 'lucide-react'
 import { ImportParticipantsModal } from './admin-participant-modal'
 import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
@@ -27,6 +28,25 @@ function pill(status: string) {
   return 'bg-slate-100 text-slate-700'
 }
 
+const PENDING_DELETE_WINDOW_MS = 10 * 60 * 1000
+
+/** Matches server rules for manual delete / stale purge (unpaid checkout only). */
+function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
+  const pay = String(r.payment_status ?? '').toLowerCase()
+  const regSt = String(r.status ?? '').toLowerCase()
+  if (pay === 'paid') return false
+  if (pay === 'pending') return true
+  if (pay === 'unknown' && ['pending_payment', 'payment_processing'].includes(regSt)) return true
+  return false
+}
+
+function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
+  if (!isUnpaidDraftRegistrationRow(r)) return false
+  const t = r.created_at ? new Date(r.created_at).getTime() : 0
+  if (!t) return false
+  return Date.now() - t <= PENDING_DELETE_WINDOW_MS
+}
+
 /** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
 function isPaymongoPaymentReferenceId(raw: string) {
   const v = normalizePaymentReferenceDisplay(raw)
@@ -48,6 +68,17 @@ function extractTallySubmissionFromMerchantReference(raw: string): string {
   const mr = String(raw ?? '').trim()
   const m = mr.match(/^tally-import-(.+)-(criterium|individual-time-trial)$/i)
   return m ? String(m[1]) : ''
+}
+
+/** True if the event target is a control — do not start row drag-to-scroll from these. */
+function isTableDragScrollInteractiveTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el?.closest) return false
+  return Boolean(
+    el.closest(
+      'button, a, input, select, textarea, label, [role="button"], [role="menuitem"], [contenteditable="true"]',
+    ),
+  )
 }
 
 function SkeletonRow() {
@@ -110,7 +141,12 @@ export function AdminRegistrations() {
   const [ledgerRows, setLedgerRows] = useState<BibLedgerRow[]>([])
   const [ledgerLoading, setLedgerLoading] = useState(false)
   const [ledgerError, setLedgerError] = useState('')
-  const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | null>>({})
+  const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | 'delete' | null>>({})
+  /** Fixed-position row menu (portal) so it is not clipped by the table scroll container. */
+  const [rowMenuPortal, setRowMenuPortal] = useState<{ id: string; top: number; right: number } | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  /** Mouse drag on table body/headers to scroll horizontally (scrollbar hidden). Touch uses native pan. */
+  const tableDragScroll = useRef({ active: false, startX: 0, startScrollLeft: 0, pointerId: -1 })
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null)
   type AdminActionBanner = { text: string; tone: 'info' | 'success' | 'warning' | 'error' }
   const [actionBanner, setActionBanner] = useState<AdminActionBanner | null>(null)
@@ -121,16 +157,48 @@ export function AdminRegistrations() {
     return () => window.clearTimeout(t)
   }, [actionBanner])
 
+  const portalMenuRow = useMemo(
+    () => (rowMenuPortal ? rows.find((x) => x.id === rowMenuPortal.id) ?? null : null),
+    [rowMenuPortal, rows],
+  )
+
+  useEffect(() => {
+    if (!rowMenuPortal) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRowMenuPortal(null)
+    }
+    const onWinScroll = () => setRowMenuPortal(null)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onWinScroll, true)
+    const tableEl = tableScrollRef.current
+    const onTableScroll = () => setRowMenuPortal(null)
+    tableEl?.addEventListener('scroll', onTableScroll, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onWinScroll, true)
+      tableEl?.removeEventListener('scroll', onTableScroll, true)
+    }
+  }, [rowMenuPortal])
+
+  useEffect(() => {
+    if (rowMenuPortal && !rows.some((x) => x.id === rowMenuPortal.id)) setRowMenuPortal(null)
+  }, [rows, rowMenuPortal])
+
   function fetchData() {
     return adminApi
-      .registrationsList()
-      .then((data) => {
-        setRows(data)
-        setError('')
-      })
-      .catch((e) => {
-        setError((e as Error).message || 'Failed to load registrations.')
-      })
+      .adminPurgeStalePendingRegistrations()
+      .catch(() => undefined)
+      .then(() =>
+        adminApi
+          .registrationsList()
+          .then((data) => {
+            setRows(data)
+            setError('')
+          })
+          .catch((e) => {
+            setError((e as Error).message || 'Failed to load registrations.')
+          }),
+      )
       .finally(() => {
         setLoading(false)
       })
@@ -602,9 +670,74 @@ export function AdminRegistrations() {
     }
   }
 
+  async function handleDeletePendingRow(row: AdminRegistrationRow) {
+    if (!canManualDeletePendingEntry(row)) return
+    const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
+    if (!window.confirm(`Permanently delete this pending registration?\n\n${label}`)) return
+    setRowMenuPortal(null)
+    setRowActionLoading((prev) => ({ ...prev, [row.id]: 'delete' }))
+    setActionBanner(null)
+    try {
+      await adminApi.adminDeletePendingRegistration(row.id)
+      setRows((prev) => prev.filter((item) => item.id !== row.id))
+      setActionBanner({ text: `Deleted pending registration for ${label}.`, tone: 'success' })
+    } catch (e) {
+      setActionBanner({ text: (e as Error).message || 'Delete failed.', tone: 'error' })
+    } finally {
+      setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
+    }
+  }
+
+  const onTablePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch') return
+    if (e.button !== 0) return
+    const root = tableScrollRef.current
+    if (!root || isTableDragScrollInteractiveTarget(e.target)) return
+    if (root.scrollWidth <= root.clientWidth + 1) return
+    const d = tableDragScroll.current
+    d.active = true
+    d.startX = e.clientX
+    d.startScrollLeft = root.scrollLeft
+    d.pointerId = e.pointerId
+    root.setPointerCapture(e.pointerId)
+    root.classList.add('cursor-grabbing', 'select-none')
+  }, [])
+
+  const onTablePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const root = tableScrollRef.current
+    const d = tableDragScroll.current
+    if (!root || !d.active || e.pointerId !== d.pointerId) return
+    e.preventDefault()
+    root.scrollLeft = d.startScrollLeft - (e.clientX - d.startX)
+  }, [])
+
+  const endTableDragScroll = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const root = tableScrollRef.current
+    const d = tableDragScroll.current
+    if (!d.active || e.pointerId !== d.pointerId) return
+    d.active = false
+    d.pointerId = -1
+    if (root) {
+      try {
+        root.releasePointerCapture(e.pointerId)
+      } catch {
+        /* pointer not captured */
+      }
+      root.classList.remove('cursor-grabbing', 'select-none')
+    }
+  }, [])
+
+  const onTableLostPointerCapture = useCallback(() => {
+    const root = tableScrollRef.current
+    const d = tableDragScroll.current
+    d.active = false
+    d.pointerId = -1
+    root?.classList.remove('cursor-grabbing', 'select-none')
+  }, [])
+
   return (
     <div className="space-y-4">
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4">
           <div>
             <h2 className="text-2xl font-semibold text-slate-900">Registrations</h2>
@@ -640,7 +773,7 @@ export function AdminRegistrations() {
 
         <div className="border-b border-slate-100 px-4 py-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Filters</p>
-          <div className="grid gap-2 md:grid-cols-[1.3fr_repeat(4,minmax(0,1fr))_auto]">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(4,minmax(0,1fr))_auto]">
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
@@ -709,19 +842,31 @@ export function AdminRegistrations() {
           </div>
         ) : null}
 
-        <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
-          <table className="min-w-[1180px] w-full text-left text-sm">
-            <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+        <div className="relative -mx-4 px-4 sm:mx-0 sm:px-0">
+          <div
+            ref={tableScrollRef}
+            className="cursor-grab touch-pan-x overscroll-x-contain overflow-x-auto overflow-y-auto scroll-smooth rounded-lg border border-slate-100 sm:rounded-none sm:border-0 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden max-h-[min(600px,calc(100dvh-11rem))] sm:max-h-[min(600px,calc(100dvh-9rem))]"
+            tabIndex={0}
+            role="region"
+            aria-label="Registrations table — drag left or right on a row or cell to scroll sideways; on touch, swipe horizontally."
+            onPointerDown={onTablePointerDown}
+            onPointerMove={onTablePointerMove}
+            onPointerUp={endTableDragScroll}
+            onPointerCancel={endTableDragScroll}
+            onLostPointerCapture={onTableLostPointerCapture}
+          >
+          <table className="w-max min-w-[1180px] max-w-none table-auto border-collapse text-left text-sm">
+            <thead className="sticky top-0 z-20 bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500 shadow-[0_1px_0_0_rgb(226_232_240)]">
               <tr>
-                <th className="py-3 pl-4 pr-3 font-semibold">Rider Name</th>
-                <th className="py-3 pr-3 font-semibold">Event</th>
-                <th className="py-3 pr-3 font-semibold">Category</th>
-                <th className="py-3 pr-3 font-semibold">Discipline</th>
-                <th className="py-3 pr-3 font-semibold">Team</th>
-                <th className="py-3 pr-3 font-semibold">Payment Status</th>
-                <th className="py-3 pr-3 font-semibold">Reference No.</th>
-                <th className="py-3 pr-3 font-semibold">Bib Number</th>
-                <th className="py-3 pr-4 text-right font-semibold">Admin Actions</th>
+                <th className="min-w-[152px] max-w-[280px] whitespace-normal py-3 pl-4 pr-3 font-semibold">Rider Name</th>
+                <th className="min-w-[168px] max-w-[280px] whitespace-normal py-3 pr-3 font-semibold">Event</th>
+                <th className="min-w-[100px] py-3 pr-3 font-semibold">Category</th>
+                <th className="min-w-[96px] py-3 pr-3 font-semibold">Discipline</th>
+                <th className="min-w-[88px] max-w-[200px] whitespace-normal py-3 pr-3 font-semibold">Team</th>
+                <th className="min-w-[112px] py-3 pr-3 font-semibold">Payment Status</th>
+                <th className="min-w-[132px] py-3 pr-3 font-semibold">Reference No.</th>
+                <th className="min-w-[72px] py-3 pr-3 font-semibold">Bib Number</th>
+                <th className="min-w-[148px] whitespace-nowrap py-3 pr-4 text-right font-semibold">Admin Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -749,42 +894,44 @@ export function AdminRegistrations() {
                     : ''
                   return (
                     <tr key={r.id} className="text-slate-800 transition-colors hover:bg-slate-50/70">
-                      <td className="py-3 pl-4 pr-3">
-                        <p className="text-xs font-semibold">{r.rider_full_name ?? '-'}</p>
-                        <p className="text-[11px] text-slate-500">{r.registrant_email ?? '-'}</p>
+                      <td className="min-w-0 max-w-[280px] py-3 pl-4 pr-3 align-top">
+                        <p className="break-words text-xs font-semibold leading-snug">{r.rider_full_name ?? '-'}</p>
+                        <p className="break-all text-[11px] leading-snug text-slate-500">{r.registrant_email ?? '-'}</p>
                       </td>
-                      <td className="py-3 pr-3 text-xs">
-                        <p className="font-medium text-slate-900">{r.event_title ?? r.race_type ?? '-'}</p>
-                        <p className="text-[11px] text-slate-500">{r.entry_event_type_label ?? formatEventTypeSlugLabel(r.entry_event_type_slug)}</p>
+                      <td className="min-w-0 max-w-[280px] py-3 pr-3 align-top text-xs">
+                        <p className="break-words font-medium leading-snug text-slate-900">{r.event_title ?? r.race_type ?? '-'}</p>
+                        <p className="break-words text-[11px] leading-snug text-slate-500">{r.entry_event_type_label ?? formatEventTypeSlugLabel(r.entry_event_type_slug)}</p>
                       </td>
-                      <td className="py-3 pr-3 text-xs">{r.age_category ?? '-'}</td>
-                      <td className="py-3 pr-3 text-xs">{r.discipline ?? '-'}</td>
-                      <td className="py-3 pr-3 text-xs">{r.team_name ?? 'N/A'}</td>
+                      <td className="max-w-[140px] break-words py-3 pr-3 align-top text-xs leading-snug">{r.age_category ?? '-'}</td>
+                      <td className="max-w-[120px] break-words py-3 pr-3 align-top text-xs leading-snug">{r.discipline ?? '-'}</td>
+                      <td className="min-w-0 max-w-[200px] break-words py-3 pr-3 align-top text-xs leading-snug">{r.team_name ?? 'N/A'}</td>
                       <td className="py-3 pr-3">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase ${pill(payment)}`}>
                           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
                           {payment}
                         </span>
                       </td>
-                      <td className="py-3 pr-3 text-xs">
+                      <td className="min-w-0 max-w-[200px] py-3 pr-3 align-top text-xs">
                         {referenceNo ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className={isPaid ? 'font-semibold text-emerald-700' : 'font-semibold text-slate-700'}>{referenceNo}</span>
-                            <span
+                          <span className="inline-flex max-w-full items-start gap-1.5">
+                            <span className={`min-w-0 break-all font-semibold leading-snug ${isPaid ? 'text-emerald-700' : 'text-slate-700'}`}>{referenceNo}</span>
+                            <button
+                              type="button"
                               title={copiedId === r.id ? 'Copied!' : 'Copy reference number'}
                               onClick={() => {
                                 void navigator.clipboard.writeText(referenceNo)
                                 setCopiedId(r.id)
                                 setTimeout(() => setCopiedId(null), 2000)
                               }}
-                              className="cursor-pointer"
+                              className="-m-1 inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 sm:min-h-0 sm:min-w-0 sm:p-1"
                             >
                               {copiedId === r.id ? (
-                                <Check className="h-3 w-3 shrink-0 text-emerald-500 transition-colors" />
+                                <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500 transition-colors" aria-hidden />
                               ) : (
-                                <Copy className="h-3 w-3 shrink-0 text-slate-400 hover:text-slate-600 transition-colors" />
+                                <Copy className="h-3.5 w-3.5 shrink-0 text-slate-400 transition-colors" aria-hidden />
                               )}
-                            </span>
+                              <span className="sr-only">Copy reference number</span>
+                            </button>
                           </span>
                         ) : (
                           <span className="text-slate-400">-</span>
@@ -814,13 +961,11 @@ export function AdminRegistrations() {
                           </span>
                         </span>
                       </td>
-                      <td className="py-3 pr-4 text-right">
-                        <div className="inline-flex items-center justify-end gap-0.5">
+                      <td className="whitespace-nowrap py-3 pr-4 text-right align-middle">
+                        <div className="inline-flex flex-nowrap items-center justify-end gap-1">
                           <button
                             type="button"
-                            aria-label={
-                              rowActionLoading[r.id] === 'autobib' ? 'Generating bib number' : 'Generate bib number'
-                            }
+                            aria-label={rowActionLoading[r.id] === 'autobib' ? 'Generating bib number' : 'Generate bib number'}
                             title={
                               rowActionLoading[r.id] === 'autobib'
                                 ? 'Generating bib…'
@@ -834,7 +979,7 @@ export function AdminRegistrations() {
                               || Boolean(String(r.bib_number ?? '').trim())
                               || !referenceNo
                             }
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#1e4a8e]/30 text-[#1e4a8e] transition hover:bg-[#1e4a8e]/10 disabled:opacity-50"
+                            className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-[#1e4a8e]/30 text-[#1e4a8e] transition hover:bg-[#1e4a8e]/10 active:bg-[#1e4a8e]/15 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
                           >
                             {rowActionLoading[r.id] === 'autobib' ? (
                               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -845,10 +990,10 @@ export function AdminRegistrations() {
                           <button
                             type="button"
                             aria-label={rowActionLoading[r.id] === 'email' ? 'Sending QR email' : 'Send QR code email'}
-                            title={rowActionLoading[r.id] === 'email' ? 'Sending email…' : 'Send QR code email'}
+                            title={rowActionLoading[r.id] === 'email' ? 'Sending email…' : 'Send QR mail'}
                             onClick={() => void handleSendQr(r.id)}
                             disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+                            className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-emerald-200 text-emerald-700 transition hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
                           >
                             {rowActionLoading[r.id] === 'email' ? (
                               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -858,22 +1003,27 @@ export function AdminRegistrations() {
                           </button>
                           <button
                             type="button"
-                            aria-label="Edit registration"
-                            title="Edit registration"
-                            onClick={() => setEditingRegistrationId(r.id)}
+                            aria-label="More registration actions"
+                            aria-expanded={rowMenuPortal?.id === r.id}
+                            aria-haspopup="menu"
+                            title="More actions"
+                            onClick={(ev) => {
+                              ev.stopPropagation()
+                              const rect = ev.currentTarget.getBoundingClientRect()
+                              setRowMenuPortal((cur) => {
+                                if (cur?.id === r.id) return null
+                                return {
+                                  id: r.id,
+                                  top: rect.bottom + 4,
+                                  right: Math.max(8, window.innerWidth - rect.right),
+                                }
+                              })
+                            }}
                             disabled={rowActionLoading[r.id] != null}
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-200 text-sky-700 transition hover:bg-sky-50 disabled:opacity-50"
+                            className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-slate-200 text-slate-700 transition hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 sm:h-9 sm:w-9"
                           >
-                            <Pencil className="h-4 w-4" aria-hidden />
+                            <MoreVertical className="h-4 w-4" aria-hidden />
                           </button>
-                          <Link
-                            to={`/admin/registrations/${encodeURIComponent(r.id)}`}
-                            aria-label="View registration"
-                            title="View registration"
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-700 transition hover:bg-slate-50"
-                          >
-                            <Eye className="h-4 w-4" aria-hidden />
-                          </Link>
                         </div>
                       </td>
                     </tr>
@@ -882,23 +1032,24 @@ export function AdminRegistrations() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          <p>Showing {showingFrom} to {showingTo} of {filtered.length} registrations</p>
-          <div className="flex items-center gap-1">
-            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400" disabled={currentPage === 1}>‹</button>
+        <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-w-0 text-center sm:text-left">Showing {showingFrom} to {showingTo} of {filtered.length} registrations</p>
+          <div className="flex flex-wrap items-center justify-center gap-1 sm:justify-end">
+            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === 1}>‹</button>
             {pageNumbers.map((pageNumber) => (
               <button
                 key={pageNumber}
                 type="button"
                 onClick={() => setPage(pageNumber)}
-                className={pageNumber === currentPage ? 'rounded-md bg-[#0f5ea8] px-2.5 py-1 font-semibold text-white' : 'rounded-md border border-slate-200 px-2.5 py-1 text-slate-600 hover:bg-slate-50'}
+                className={`inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md px-2.5 py-1 text-sm sm:min-h-0 sm:min-w-0 sm:text-xs ${pageNumber === currentPage ? 'bg-[#0f5ea8] font-semibold text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 {pageNumber}
               </button>
             ))}
-            <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400" disabled={currentPage === totalPages}>›</button>
+            <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === totalPages}>›</button>
           </div>
         </div>
       </section>
@@ -1020,6 +1171,64 @@ export function AdminRegistrations() {
           </div>
         </div>
       ) : null}
+
+      {rowMenuPortal && portalMenuRow && typeof document !== 'undefined'
+        ? createPortal(
+            <>
+              <div className="fixed inset-0 z-[80] bg-slate-900/0" aria-hidden onClick={() => setRowMenuPortal(null)} />
+              <div
+                role="menu"
+                className="fixed z-[90] max-h-[min(70vh,22rem)] w-[min(calc(100vw-16px),13rem)] overflow-y-auto overscroll-contain rounded-md border border-slate-200 bg-white py-1 text-left shadow-xl"
+                style={{ top: rowMenuPortal.top, right: rowMenuPortal.right }}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={rowActionLoading[portalMenuRow.id] != null}
+                  className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:py-2 sm:text-xs"
+                  onClick={() => {
+                    setRowMenuPortal(null)
+                    setEditingRegistrationId(portalMenuRow.id)
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Edit entry
+                </button>
+                <Link
+                  role="menuitem"
+                  to={`/admin/registrations/${encodeURIComponent(portalMenuRow.id)}`}
+                  aria-disabled={rowActionLoading[portalMenuRow.id] != null}
+                  className={`flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50 sm:min-h-0 sm:py-2 sm:text-xs ${rowActionLoading[portalMenuRow.id] != null ? 'pointer-events-none opacity-40' : ''}`}
+                  onClick={() => setRowMenuPortal(null)}
+                >
+                  View registration
+                </Link>
+                {isUnpaidDraftRegistrationRow(portalMenuRow) ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    title={
+                      canManualDeletePendingEntry(portalMenuRow)
+                        ? 'Remove this unpaid checkout (within 10 minutes of creation).'
+                        : 'Older than 10 minutes — it will be removed automatically when the list refreshes.'
+                    }
+                    disabled={!canManualDeletePendingEntry(portalMenuRow) || rowActionLoading[portalMenuRow.id] === 'delete'}
+                    onClick={() => void handleDeletePendingRow(portalMenuRow)}
+                    className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:py-2 sm:text-xs"
+                  >
+                    {rowActionLoading[portalMenuRow.id] === 'delete' ? (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    )}
+                    Delete entry
+                  </button>
+                ) : null}
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
