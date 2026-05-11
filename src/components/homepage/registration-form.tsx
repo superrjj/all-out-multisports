@@ -36,6 +36,12 @@ const shirtSizes = ['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large']
 const cardClass =
   'rounded-xl border border-slate-200 bg-white p-4 shadow-[0_12px_30px_-12px_rgba(15,23,42,0.28),0_6px_14px_-8px_rgba(15,23,42,0.2)] sm:p-5'
 
+/** Map event type slugs to their image filenames in /public */
+const EVENT_TYPE_IMAGES: Record<string, string> = {
+  'criterium': '/criterium.png',
+  'individual-time-trial': '/timetrial.png',
+}
+
 function ShimmerBar({ className }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-slate-200 ${className ?? ''}`} />
 }
@@ -57,7 +63,6 @@ function FormCardSkeleton({ tall }: { tall?: boolean }) {
 
 // ─── Age category detection & resolution ────────────────────────────────────
 
-// Patterns that indicate a category is age-graded (not open/heavyweight/etc.)
 const AGE_PATTERNS = [
   /youth/i,
   /junior/i,
@@ -78,41 +83,25 @@ const AGE_PATTERNS = [
   /\b55\b/,
 ]
 
-/**
- * Returns true if the category list for this discipline contains
- * at least one age-graded entry (Youth, Junior, Masters, etc.).
- */
 function disciplineHasAgeCategories(categoryNames: string[]): boolean {
   return categoryNames.some((name) => AGE_PATTERNS.some((re) => re.test(name)))
 }
 
-/**
- * Compute race age per the rules: age on December 31 of the competition year.
- * Uses the full birth date so month/day are taken into account.
- */
 function computeRaceAge(birthDateStr: string): number | null {
   if (!birthDateStr) return null
   const dob = new Date(birthDateStr)
   if (Number.isNaN(dob.getTime())) return null
   const competitionYear = new Date().getFullYear()
-  // December 31 of competition year
   const dec31 = new Date(competitionYear, 11, 31)
   let age = dec31.getFullYear() - dob.getFullYear()
-  // Adjust if birthday hasn't occurred yet by Dec 31 (it always has, but keep safe)
   const m = dec31.getMonth() - dob.getMonth()
   if (m < 0 || (m === 0 && dec31.getDate() < dob.getDate())) age--
   return age
 }
 
-/**
- * Match an age to an age-graded category by keyword-scanning the category names.
- * This is robust to DB ordering changes.
- */
 function resolveAgeCategoryByKeyword(age: number, categoryNames: string[]): string {
-  // Only consider age-graded categories
   const ageCats = categoryNames.filter((name) => AGE_PATTERNS.some((re) => re.test(name)))
 
-  // Try explicit bracket matching first (e.g. "15 and Below", "16-18", "19-22", etc.)
   for (const name of ageCats) {
     if (age <= 15 && (/15\s*(and\s*)?below/i.test(name) || /youth/i.test(name))) return name
     if (age >= 16 && age <= 18 && (/16[-–]18/i.test(name) || /junior/i.test(name))) return name
@@ -123,7 +112,6 @@ function resolveAgeCategoryByKeyword(age: number, categoryNames: string[]): stri
     if (age >= 55 && (/55\s*(and\s*)?above/i.test(name) || /masters?\s*d/i.test(name))) return name
   }
 
-  // Fallback: pick last age-graded category for seniors
   if (ageCats.length > 0) return ageCats[ageCats.length - 1]
   return ''
 }
@@ -143,11 +131,6 @@ function normalizeGenderEligibility(raw: unknown): GenderEligibility {
   return 'all'
 }
 
-/**
- * Admin column wins. If still "all", infer only obvious open women's / men's class names so
- * legacy rows work before every category has Eligibility set — avoids showing Youth/Masters/etc.
- * to female riders when only "Open Female" should apply.
- */
 function effectiveGenderEligibility(cat: RaceCategory): GenderEligibility {
   const fromDb = normalizeGenderEligibility(cat.gender_eligibility)
   if (fromDb !== 'all') return fromDb
@@ -159,7 +142,6 @@ function effectiveGenderEligibility(cat: RaceCategory): GenderEligibility {
   return 'all'
 }
 
-/** Uses race_categories.gender_eligibility plus conservative name inference when DB is still "all". */
 function categoryMatchesRiderGender(cat: RaceCategory, riderGender: string): boolean {
   const rule = effectiveGenderEligibility(cat)
   if (rule === 'all') return true
@@ -176,7 +158,6 @@ function nameLooksLikeWomenCategory(name: string): boolean {
   return false
 }
 
-/** When DB still has "all" on age/open rows, treat as men's field for filtering (no "female" in name). */
 function nameLooksLikeMenOnlyAgeOrOpen(name: string): boolean {
   const n = String(name ?? '')
   if (nameLooksLikeWomenCategory(n)) return false
@@ -191,7 +172,11 @@ function disciplineHasFemaleSpecificCategory(categories: RaceCategory[]): boolea
   return categories.some((c) => effectiveGenderEligibility(c) === 'female')
 }
 
-/** Earliest category `created_at` in the list — older disciplines sort first. */
+/**
+ * Returns the earliest created_at timestamp (in ms) among all categories in the group.
+ * Used to sort discipline groups dynamically — whichever discipline had its first category
+ * created earliest appears first. No hardcoded order.
+ */
 function minCategoryCreatedAtMs(cats: RaceCategory[]): number {
   let m = Infinity
   for (const c of cats) {
@@ -202,10 +187,6 @@ function minCategoryCreatedAtMs(cats: RaceCategory[]): number {
   return m === Infinity ? Number.MAX_SAFE_INTEGER : m
 }
 
-/**
- * DB eligibility first; for female riders, if this discipline also defines a women's class,
- * hide legacy `all` rows that look like men's age brackets or generic open/elite (auto-hide without editing every row).
- */
 function categoryMatchesRiderGenderInDiscipline(
   cat: RaceCategory,
   riderGender: string,
@@ -292,7 +273,7 @@ export function RegistrationForm() {
   const selectedEvent = useMemo(() => events.find((item) => item.id === eventId) ?? null, [events, eventId])
   const registrationFee = Number(selectedEvent?.registration_fee ?? 0)
 
-  // ── Event Types (from event_types table + event's race_type slugs) ─────────
+  // ── Event Types ────────────────────────────────────────────────────────────
   const [eventTypes, setEventTypes] = useState<EventType[]>([])
   const [eventTypesLoading, setEventTypesLoading] = useState(false)
   const [selectedEventTypeSlugs, setSelectedEventTypeSlugs] = useState<string[]>([])
@@ -307,7 +288,6 @@ export function RegistrationForm() {
         return
       }
 
-      // Parse slugs from the event's race_type field (comma-separated)
       const rawSlugs = String(selectedEvent.race_type ?? '')
         .split(',')
         .map((s) => s.trim())
@@ -332,10 +312,8 @@ export function RegistrationForm() {
 
         if (!active) return
         if (err || !data || data.length === 0) {
-          // Fallback: derive name from slug if table query fails or returns nothing
           setEventTypes(rawSlugs.map((slug) => ({ slug, name: formatSlug(slug) })))
         } else {
-          // Preserve order from rawSlugs
           const bySlug = new Map((data as EventType[]).map((t) => [t.slug, t]))
           setEventTypes(rawSlugs.map((slug) => bySlug.get(slug) ?? { slug, name: formatSlug(slug) }))
         }
@@ -366,7 +344,7 @@ export function RegistrationForm() {
     clearFieldError('category')
   }
 
-  // ── Race Categories from DB ────────────────────────────────────────────────
+  // ── Race Categories ────────────────────────────────────────────────────────
   const [disciplineGroups, setDisciplineGroups] = useState<DisciplineGroup[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
 
@@ -394,23 +372,45 @@ export function RegistrationForm() {
           setDisciplineGroups([])
           return
         }
+
+        // Sort individual rows by created_at ascending
         const rowsSorted = [...(data as RaceCategory[])].sort((a, b) => {
           const ta = a.created_at ? new Date(a.created_at).getTime() : 0
           const tb = b.created_at ? new Date(b.created_at).getTime() : 0
           return ta - tb
         })
+
+        // Build a map of discipline → its earliest created_at (i.e. when the
+        // first category in that discipline was ever added). This is the true
+        // insertion order of each discipline, regardless of how many categories
+        // were added to it later.
+        const disciplineFirstSeen = new Map<string, number>()
+        for (const row of rowsSorted) {
+          const disc = (row.discipline ?? '').trim() || 'General'
+          if (!disciplineFirstSeen.has(disc)) {
+            const t = row.created_at ? new Date(row.created_at).getTime() : 0
+            disciplineFirstSeen.set(disc, t)
+          }
+        }
+
+        // Group rows by discipline (categories within each group are already
+        // in created_at order because rowsSorted is sorted ascending).
         const groupMap = new Map<string, RaceCategory[]>()
         for (const row of rowsSorted) {
           const disc = (row.discipline ?? '').trim() || 'General'
           if (!groupMap.has(disc)) groupMap.set(disc, [])
           groupMap.get(disc)!.push(row)
         }
+
+        // Sort discipline groups by the timestamp of their very first category —
+        // whichever discipline had a category created first appears first (leftmost).
         const groups: DisciplineGroup[] = Array.from(groupMap.entries())
           .map(([discipline, categories]) => ({ discipline, categories }))
-          .sort((a, b) => minCategoryCreatedAtMs(a.categories) - minCategoryCreatedAtMs(b.categories))
+          .sort((a, b) => (disciplineFirstSeen.get(a.discipline) ?? 0) - (disciplineFirstSeen.get(b.discipline) ?? 0))
+
         setDisciplineGroups(groups)
 
-        // Auto-select first discipline
+        // Default to whichever discipline sorts first (earliest created_at).
         const firstDisc = groups[0]?.discipline ?? ''
         setForm((p) => ({ ...p, discipline: firstDisc }))
         setSelectedCategoryIds([])
@@ -424,10 +424,6 @@ export function RegistrationForm() {
     return () => { active = false }
   }, [selectedEvent?.id])
 
-  /**
-   * After gender is chosen, only disciplines that have ≥1 matching category appear,
-   * and each discipline lists only categories allowed for that gender (all / male / female).
-   */
   const disciplineGroupsForRider = useMemo(() => {
     if (!form.gender.trim()) return []
     return disciplineGroups
@@ -436,7 +432,12 @@ export function RegistrationForm() {
         categories: g.categories.filter((c) => categoryMatchesRiderGenderInDiscipline(c, form.gender, g.categories)),
       }))
       .filter((g) => g.categories.length > 0)
-      .sort((a, b) => minCategoryCreatedAtMs(a.categories) - minCategoryCreatedAtMs(b.categories))
+      // Preserve the same created_at-based order from disciplineGroups
+      .sort((a, b) => {
+        const ai = disciplineGroups.findIndex((g) => g.discipline === a.discipline)
+        const bi = disciplineGroups.findIndex((g) => g.discipline === b.discipline)
+        return ai - bi
+      })
   }, [disciplineGroups, form.gender])
 
   const currentDisciplineGroup = useMemo(
@@ -444,13 +445,11 @@ export function RegistrationForm() {
     [disciplineGroupsForRider, form.discipline],
   )
 
-  /** Same as categories in the visible discipline (already filtered by gender when gender is set). */
   const categoriesEligibleForRider = useMemo(
     () => currentDisciplineGroup?.categories ?? [],
     [currentDisciplineGroup],
   )
 
-  /** Keep discipline in sync when gender hides the current tab (e.g. male-only MTB no longer listed for Female). */
   useEffect(() => {
     if (!form.gender.trim()) return
     const visible = disciplineGroupsForRider
@@ -512,16 +511,13 @@ export function RegistrationForm() {
     return firstId ? cats.find((c) => c.id === firstId) ?? null : null
   }, [categoriesEligibleForRider, selectedCategoryIdsInDiscipline])
 
-  // Does this discipline have age-graded categories (Youth / Junior / Masters)?
   const hasAgeCategories = useMemo(
     () => disciplineHasAgeCategories(currentCategoryNames),
     [currentCategoryNames],
   )
 
-  // Race age computed from the DOB field (December 31 of competition year rule)
   const raceAge = useMemo(() => computeRaceAge(form.birthDate), [form.birthDate])
 
-  // The category that best matches the rider's age (only meaningful when discipline has age cats)
   const suggestedAgeCategory = useMemo(() => {
     if (!hasAgeCategories || raceAge === null) return ''
     return resolveAgeCategoryByKeyword(raceAge, currentCategoryNames)
@@ -543,9 +539,9 @@ export function RegistrationForm() {
     if (!form.emergencyContactName) errors.emergencyContactName = 'Emergency contact name is required.'
     if (!form.emergencyContactNumber) errors.emergencyContactNumber = 'Emergency contact number is required.'
     if (form.gender.trim() && disciplineGroupsForRider.length === 0) {
-      errors.category = 'No disciplines or categories match your gender for this event. Contact the organizer.'
+      errors.category = 'No disciplines or categories are available for your gender. Please contact the organizer.'
     } else if (form.gender.trim() && categoriesEligibleForRider.length === 0) {
-      errors.category = 'No categories are available for your gender in this discipline. Contact the organizer.'
+      errors.category = 'No categories are available for your gender in this discipline. Please contact the organizer.'
     } else if (selectedCategoryIdsInDiscipline.length === 0) {
       errors.category = 'Please select at least one category.'
     }
@@ -631,6 +627,21 @@ export function RegistrationForm() {
             <ShimmerBar className="h-4 w-72 max-w-full" />
           </div>
           <FormCardSkeleton tall />
+          <div className={`${cardClass} space-y-4`}>
+            <ShimmerBar className="h-4 w-24" />
+            <ShimmerBar className="h-3 w-48" />
+            <div className="flex gap-3">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="w-40 overflow-hidden rounded-xl border border-slate-200">
+                  <div className="aspect-square w-full animate-pulse bg-slate-200" />
+                  <div className="flex items-center gap-2 bg-white px-3 py-2">
+                    <div className="h-4 w-4 animate-pulse rounded bg-slate-200" />
+                    <div className="h-3 w-20 animate-pulse rounded bg-slate-200" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           <FormCardSkeleton tall />
           <FormCardSkeleton tall />
           <FormCardSkeleton />
@@ -684,7 +695,7 @@ export function RegistrationForm() {
             </div>
           )}
 
-          {/* Event Types as checkboxes */}
+          {/* ── Event Types with images ──────────────────────────────────── */}
           <div className="space-y-2">
             <label className="text-sm font-semibold text-slate-900">
               Event Type <span className="text-rose-500">*</span>
@@ -696,9 +707,10 @@ export function RegistrationForm() {
             ) : eventTypes.length === 0 ? (
               <p className="text-xs text-rose-600">No event types available for this event.</p>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-3">
                 {eventTypes.map((et) => {
                   const checked = selectedEventTypeSlugs.includes(et.slug)
+                  const imgSrc = EVENT_TYPE_IMAGES[et.slug]
                   return (
                     <button
                       key={et.slug}
@@ -706,19 +718,47 @@ export function RegistrationForm() {
                       role="checkbox"
                       aria-checked={checked}
                       onClick={() => toggleEventType(et.slug)}
-                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${checked
-                        ? 'border-[#cfae3f] bg-[#fff6d6] text-slate-900'
-                        : 'border-slate-300 bg-white text-slate-700 hover:border-[#cfae3f]'
-                        }`}
+                      className={`relative w-40 overflow-hidden rounded-xl border-2 text-left transition-all focus:outline-none ${
+                        checked
+                          ? 'border-[#cfae3f] shadow-md'
+                          : 'border-slate-200 hover:border-[#cfae3f]/60'
+                      }`}
                     >
-                      <span
-                        aria-hidden="true"
-                        className={`flex h-4 w-4 items-center justify-center rounded border text-xs ${checked ? 'border-[#cfae3f] bg-[#cfae3f] text-black' : 'border-slate-300 bg-white'
-                          }`}
+                      {/* Event type image */}
+                      {imgSrc && (
+                        <div className="aspect-square w-full overflow-hidden bg-slate-100">
+                          <img
+                            src={imgSrc}
+                            alt={et.name}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      )}
+
+                      {/* Label row */}
+                      <div
+                        className={`flex items-center gap-2 px-3 py-2 ${
+                          checked ? 'bg-[#fff6d6]' : 'bg-white'
+                        }`}
                       >
-                        {checked ? '✓' : ''}
-                      </span>
-                      {et.name}
+                        {/* Custom checkbox */}
+                        <span
+                          aria-hidden="true"
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 text-xs transition-all ${
+                            checked
+                              ? 'border-[#cfae3f] bg-[#cfae3f] text-black'
+                              : 'border-slate-300 bg-white'
+                          }`}
+                        >
+                          {checked ? '✓' : ''}
+                        </span>
+                        <span className="truncate text-xs font-semibold text-slate-800">{et.name}</span>
+                      </div>
+
+                      {/* Selected overlay border glow */}
+                      {checked && (
+                        <span className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-[#cfae3f]/40" />
+                      )}
                     </button>
                   )
                 })}
@@ -777,14 +817,14 @@ export function RegistrationForm() {
             onChange={(v) => updateFormField('gender', v)}
           />
           <div className="md:col-span-2">
-          <Field
-            label={<>Date Of Birth <span className="text-rose-500">*</span></>}
-            type="date"
-            value={form.birthDate}
-            error={fieldErrors.birthDate}
-            onChange={(v) => updateFormField('birthDate', v)}
-          />
-        </div>
+            <Field
+              label={<>Date Of Birth <span className="text-rose-500">*</span></>}
+              type="date"
+              value={form.birthDate}
+              error={fieldErrors.birthDate}
+              onChange={(v) => updateFormField('birthDate', v)}
+            />
+          </div>
           <Field
             label={<>Address <span className="text-rose-500">*</span></>}
             value={form.address}
@@ -839,155 +879,163 @@ export function RegistrationForm() {
           </div>
 
           {categoriesLoading ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {Array.from({ length: 2 }).map((_, i) => (
-                <div key={i} className="animate-pulse rounded-lg border border-slate-200 bg-white p-4">
-                  <div className="mb-2 h-4 w-32 rounded bg-slate-200" />
-                  <div className="mb-4 h-3 w-40 rounded bg-slate-100" />
-                  <div className="space-y-2">
-                    {Array.from({ length: 4 }).map((_, j) => (
-                      <div key={j} className="h-3 w-3/4 rounded bg-slate-100" />
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <div className="h-8 w-28 animate-pulse rounded-full bg-slate-200" />
+                <div className="h-8 w-32 animate-pulse rounded-full bg-slate-200" />
+              </div>
+              <div className="grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-11 animate-pulse rounded-lg bg-slate-200" />
+                ))}
+              </div>
             </div>
           ) : disciplineGroups.length === 0 ? (
             <p className="text-xs text-rose-600">No categories configured for this event.</p>
-          ) : !form.gender.trim() ? (
-            <p className="mt-1 text-xs text-slate-500">
-              Select your gender first so we can show the disciplines and categories available for your rider profile.
-            </p>
-          ) : disciplineGroupsForRider.length === 0 ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
-              No disciplines or categories are available for <strong>{form.gender}</strong> for this event. Please contact
-              the organizer.
-            </p>
           ) : (
-            <div className="space-y-4">
-              {/* ── Discipline tab-pills (filtered by gender eligibility once gender is chosen) ─ */}
-              {disciplineGroupsForRider.length > 1 && (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discipline</p>
-                  <div className="flex flex-wrap gap-2">
-                    {disciplineGroupsForRider.map((g) => {
-                      const active = form.discipline === g.discipline
-                      return (
-                        <button
-                          key={g.discipline}
-                          type="button"
-                          onClick={() => {
-                            setForm((p) => ({ ...p, discipline: g.discipline }))
-                            const nextGroup = disciplineGroupsForRider.find((d) => d.discipline === g.discipline)
-                            const allowed = new Set((nextGroup?.categories ?? []).map((c) => c.id))
-                            setSelectedCategoryIds((prev) => prev.filter((id) => allowed.has(id)))
-                          }}
-                          className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-semibold transition-all ${active
-                              ? 'border-[#cfae3f] bg-[#cfae3f] text-black shadow-sm'
-                              : 'border-slate-300 bg-white text-slate-600 hover:border-[#cfae3f] hover:text-slate-900'
+            (() => {
+              // Use gender-filtered groups when gender is set, otherwise show all groups unfiltered
+              const noGender = !form.gender.trim()
+              const visibleGroups = noGender ? disciplineGroups : disciplineGroupsForRider
+              const currentGroup = noGender
+                ? disciplineGroups.find((g) => g.discipline === form.discipline) ?? disciplineGroups[0] ?? null
+                : currentDisciplineGroup
+              const visibleCategories = currentGroup?.categories ?? []
+
+              if (!noGender && disciplineGroupsForRider.length === 0) {
+                return (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+                    No disciplines or categories are available for <strong>{form.gender}</strong> riders in this event. Please contact the organizer.
+                  </p>
+                )
+              }
+
+              return (
+                <div className="space-y-4">
+                  {/* Discipline tabs */}
+                  {visibleGroups.length > 1 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discipline</p>
+                      <div className="flex flex-wrap gap-2">
+                        {visibleGroups.map((g) => {
+                          const active = form.discipline === g.discipline
+                          return (
+                            <button
+                              key={g.discipline}
+                              type="button"
+                              onClick={() => {
+                                setForm((p) => ({ ...p, discipline: g.discipline }))
+                                const allowed = new Set(g.categories.map((c) => c.id))
+                                setSelectedCategoryIds((prev) => prev.filter((id) => allowed.has(id)))
+                              }}
+                              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-semibold transition-all ${
+                                active
+                                  ? 'border-[#cfae3f] bg-[#cfae3f] text-black shadow-sm'
+                                  : 'border-slate-300 bg-white text-slate-600 hover:border-[#cfae3f] hover:text-slate-900'
+                              }`}
+                            >
+                              {active && (
+                                <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 12 12" fill="none">
+                                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              )}
+                              {g.discipline}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {visibleGroups.length === 1 && (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center rounded-full border border-[#cfae3f] bg-[#fff6d6] px-3 py-1 text-sm font-semibold text-slate-800">
+                        {visibleGroups[0].discipline}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Category grid */}
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {hasAgeCategories ? (
+                        <>Age / Class Category <span className="text-rose-500 normal-case font-normal tracking-normal">*</span></>
+                      ) : (
+                        <>Race category <span className="text-rose-500 normal-case font-normal tracking-normal">*</span></>
+                      )}
+                    </p>
+
+                    {/* Friendly message for female riders when there are no age brackets — no jargon */}
+                    {!noGender && form.gender.trim().toLowerCase() === 'female' && !hasAgeCategories && visibleCategories.length > 0 && (
+                      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700">
+                        There's <strong>one category for women</strong> in this discipline — just select it below. It covers all event types you pick.
+                      </p>
+                    )}
+
+                    {!noGender && form.gender && visibleCategories.length === 0 && (
+                      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                        No categories are set up for <strong>{form.gender}</strong> riders in this discipline. Try switching to another discipline or contact the organizer.
+                      </p>
+                    )}
+
+                    <div className={`grid grid-cols-1 gap-2 sm:grid-cols-2 rounded-xl border p-3 ${fieldErrors.category ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
+                      {visibleCategories.map((cat) => {
+                        const checked = !noGender && selectedCategoryIds.includes(cat.id)
+                        const disabled = noGender
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            role="checkbox"
+                            aria-checked={checked}
+                            disabled={disabled}
+                            onClick={() => !disabled && toggleCategory(cat.id)}
+                            className={`group relative flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm font-medium transition-all ${
+                              disabled
+                                ? 'cursor-default border-slate-200 bg-white text-slate-400'
+                                : checked
+                                  ? 'border-[#cfae3f] bg-[#fff6d6] text-slate-900 shadow-sm'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-[#cfae3f]/60 hover:bg-[#fffdf0] hover:text-slate-900'
                             }`}
-                        >
-                          {active && (
-                            <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 12 12" fill="none">
-                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                          {g.discipline}
-                        </button>
-                      )
-                    })}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${
+                                disabled
+                                  ? 'border-slate-200 bg-slate-100'
+                                  : checked
+                                    ? 'border-[#cfae3f] bg-[#cfae3f]'
+                                    : 'border-slate-300 bg-white group-hover:border-[#cfae3f]/70'
+                              }`}
+                            >
+                              {checked && (
+                                <svg className="h-3 w-3 text-black" viewBox="0 0 12 12" fill="none">
+                                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              )}
+                            </span>
+                            <span className="flex-1 leading-snug">{cat.category_name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {/* Prompt to select gender when no gender yet */}
+                    {noGender && (
+                      <p className="text-xs text-slate-500">
+                        Select your <strong>gender</strong> above to enable category selection.
+                      </p>
+                    )}
+
+                    {fieldErrors.category && (
+                      <p className="text-xs text-rose-500">{fieldErrors.category}</p>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Single visible discipline: show name as static label */}
-              {disciplineGroupsForRider.length === 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center rounded-full border border-[#cfae3f] bg-[#fff6d6] px-3 py-1 text-sm font-semibold text-slate-800">
-                    {disciplineGroupsForRider[0].discipline}
-                  </span>
-                </div>
-              )}
-
-              {/* ── Category grid ────────────────────────────────────────── */}
-              <div className="space-y-1.5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {hasAgeCategories ? (
-                    <>
-                      Age / Class Category{' '}
-                      <span className="text-rose-500 normal-case font-normal tracking-normal">*</span>
-                    </>
-                  ) : (
-                    <>
-                      Race category{' '}
-                      <span className="text-rose-500 normal-case font-normal tracking-normal">*</span>
-                    </>
-                  )}
-                </p>
-                {form.gender.trim().toLowerCase() === 'female' &&
-                !hasAgeCategories &&
-                categoriesEligibleForRider.length > 0 ? (
-                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700">
-                    There are <strong>no separate age brackets</strong> for your selection — choose your{' '}
-                    <strong>women’s / open class</strong> below (same for every event type you pick).
-                  </p>
-                ) : null}
-                {form.gender && categoriesEligibleForRider.length === 0 ? (
-                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-                    No categories are set up for <strong>{form.gender}</strong> in this discipline. Choose another
-                    discipline or contact registration.
-                  </p>
-                ) : null}
-                <div
-                  className={`grid grid-cols-1 gap-2 sm:grid-cols-2 rounded-xl border p-3 ${fieldErrors.category ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'
-                    }`}
-                >
-                  {categoriesEligibleForRider.map((cat) => {
-                    const checked = selectedCategoryIds.includes(cat.id)
-                    return (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        role="checkbox"
-                        aria-checked={checked}
-                        onClick={() => toggleCategory(cat.id)}
-                        className={`group relative flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm font-medium transition-all ${checked
-                            ? 'border-[#cfae3f] bg-[#fff6d6] text-slate-900 shadow-sm'
-                            : 'border-slate-200 bg-white text-slate-600 hover:border-[#cfae3f]/60 hover:bg-[#fffdf0] hover:text-slate-900'
-                          }`}
-                      >
-                        {/* Custom checkbox */}
-                        <span
-                          aria-hidden="true"
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${checked
-                              ? 'border-[#cfae3f] bg-[#cfae3f]'
-                              : 'border-slate-300 bg-white group-hover:border-[#cfae3f]/70'
-                            }`}
-                        >
-                          {checked && (
-                            <svg className="h-3 w-3 text-black" viewBox="0 0 12 12" fill="none">
-                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          )}
-                        </span>
-                        <span className="flex-1 leading-snug">{cat.category_name}</span>
-                        {checked && (
-                          <span className="shrink-0 rounded-full bg-[#cfae3f]/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8a6d00]">
-                            Selected
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-                {fieldErrors.category && (
-                  <p className="text-xs text-rose-500">{fieldErrors.category}</p>
-                )}
-              </div>
-            </div>
+              )
+            })()
           )}
 
-          {/* Age-based suggestion — only when eligible list includes age-graded category names */}
           {hasAgeCategories && form.birthDate && suggestedAgeCategory && (
             <div className="flex flex-col gap-2 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3.5">
               <div className="flex items-start gap-2.5">
@@ -1131,16 +1179,16 @@ function Field({
   error?: string
 }) {
   return (
-    <div className="min-w-0 space-y-2">
+    <div className="min-w-0 w-full space-y-2 overflow-hidden">
       <label className="text-sm font-semibold text-slate-900">{label}</label>
       <input
         value={value}
         type={type}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-       className={`block w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:text-sm ${
-        type === 'date' ? 'h-11 min-h-[44px]' : 'h-11 sm:h-10'
-      } ${error ? 'border-rose-400' : 'border-slate-300'}`}
+        className={`box-border block w-full min-w-0 max-w-full appearance-none rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:text-sm ${
+          type === 'date' ? 'h-11 min-h-[44px]' : 'h-11 sm:h-10'
+        } ${error ? 'border-rose-400' : 'border-slate-300'}`}
       />
       {error && <p className="text-xs text-rose-500">{error}</p>}
     </div>
@@ -1163,13 +1211,14 @@ function SelectField({
   placeholder?: string
 }) {
   return (
-    <div className="min-w-0 space-y-2">
+    <div className="min-w-0 w-full space-y-2 overflow-hidden">
       <label className="text-sm font-semibold text-slate-900">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`block h-11 w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:h-10 sm:text-sm ${error ? 'border-rose-400' : 'border-slate-300'
-          }`}
+        className={`block h-11 w-full max-w-full rounded-md border bg-white px-3 text-base leading-normal text-slate-900 outline-none focus:border-[#cfae3f] sm:h-10 sm:text-sm ${
+          error ? 'border-rose-400' : 'border-slate-300'
+        }`}
       >
         {placeholder && (
           <option value="" disabled>
