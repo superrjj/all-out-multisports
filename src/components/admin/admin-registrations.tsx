@@ -144,6 +144,7 @@ export function AdminRegistrations() {
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | 'delete' | null>>({})
   /** Fixed-position row menu (portal) so it is not clipped by the table scroll container. */
   const [rowMenuPortal, setRowMenuPortal] = useState<{ id: string; top: number; right: number } | null>(null)
+  const [pendingDeleteRow, setPendingDeleteRow] = useState<AdminRegistrationRow | null>(null)
   const tableScrollRef = useRef<HTMLDivElement>(null)
   /** Mouse drag on table body/headers to scroll horizontally (scrollbar hidden). Touch uses native pan. */
   const tableDragScroll = useRef({ active: false, startX: 0, startScrollLeft: 0, pointerId: -1 })
@@ -181,8 +182,22 @@ export function AdminRegistrations() {
   }, [rowMenuPortal])
 
   useEffect(() => {
-    if (rowMenuPortal && !rows.some((x) => x.id === rowMenuPortal.id)) setRowMenuPortal(null)
+    if (!rowMenuPortal) return
+    if (rows.some((x) => x.id === rowMenuPortal.id)) return
+    const id = requestAnimationFrame(() => {
+      setRowMenuPortal(null)
+    })
+    return () => cancelAnimationFrame(id)
   }, [rows, rowMenuPortal])
+
+  useEffect(() => {
+    if (!pendingDeleteRow) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingDeleteRow(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pendingDeleteRow])
 
   function fetchData() {
     return adminApi
@@ -396,7 +411,6 @@ export function AdminRegistrations() {
   }
 
   useEffect(() => {
-    setLoading(true)
     void fetchData()
 
     const channel = supabase
@@ -456,7 +470,7 @@ export function AdminRegistrations() {
     [ledgerCategories, ledgerDiscipline],
   )
 
-  const filtered = useMemo(() => {
+  const filtered = (() => {
     const query = q.trim().toLowerCase()
     let result = rows.filter((r) => {
       const matchesSearch =
@@ -484,7 +498,7 @@ export function AdminRegistrations() {
     })
 
     return result
-  }, [q, rows, raceFilter, paymentFilter, categoryFilter, sortBy])
+  })()
 
   const paidCount = filtered.filter((r) => String(r.payment_status ?? '').toLowerCase() === 'paid').length
   const pendingCount = filtered.filter((r) => String(r.payment_status ?? '').toLowerCase() !== 'paid').length
@@ -516,13 +530,16 @@ export function AdminRegistrations() {
     return [currentPage - 2, currentPage - 1, currentPage, currentPage + 1, currentPage + 2]
   }, [currentPage, totalPages])
 
+  /* eslint-disable react-hooks/set-state-in-effect -- keep page in sync when filters change or total pages shrink */
   useEffect(() => { setPage(1) }, [q, raceFilter, paymentFilter, categoryFilter, sortBy])
   useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (!ledgerOpen) return
     if (ledgerEventId) return
     const first = ledgerEventOptions[0]?.id ?? ''
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- default ledger event id when opening modal */
     if (first) setLedgerEventId(first)
   }, [ledgerOpen, ledgerEventId, ledgerEventOptions])
 
@@ -557,6 +574,7 @@ export function AdminRegistrations() {
       .then(({ data }) => setLedgerEventTypes((data ?? []) as EventTypeRow[]))
   }, [ledgerEventId])
 
+  /* eslint-disable react-hooks/set-state-in-effect -- legend panel loading/error flags before async fetch */
   useEffect(() => {
     if (!ledgerOpen || !ledgerEventId) return
     let active = true
@@ -598,6 +616,7 @@ export function AdminRegistrations() {
     })()
     return () => { active = false }
   }, [ledgerOpen, ledgerEventId, ledgerDiscipline, ledgerCategoryId, ledgerCategoryOptions])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function handleSendQr(registrationId: string) {
     setRowActionLoading((prev) => ({ ...prev, [registrationId]: 'email' }))
@@ -670,16 +689,21 @@ export function AdminRegistrations() {
     }
   }
 
-  async function handleDeletePendingRow(row: AdminRegistrationRow) {
+  function openPendingDeleteModal(row: AdminRegistrationRow) {
     if (!canManualDeletePendingEntry(row)) return
-    const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
-    if (!window.confirm(`Permanently delete this pending registration?\n\n${label}`)) return
     setRowMenuPortal(null)
+    setPendingDeleteRow(row)
+  }
+
+  async function confirmPendingDelete(row: AdminRegistrationRow) {
+    if (!row?.id) return
+    const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
     setRowActionLoading((prev) => ({ ...prev, [row.id]: 'delete' }))
     setActionBanner(null)
     try {
       await adminApi.adminDeletePendingRegistration(row.id)
       setRows((prev) => prev.filter((item) => item.id !== row.id))
+      setPendingDeleteRow(null)
       setActionBanner({ text: `Deleted pending registration for ${label}.`, tone: 'success' })
     } catch (e) {
       setActionBanner({ text: (e as Error).message || 'Delete failed.', tone: 'error' })
@@ -1212,15 +1236,11 @@ export function AdminRegistrations() {
                         ? 'Remove this unpaid checkout (within 10 minutes of creation).'
                         : 'Older than 10 minutes — it will be removed automatically when the list refreshes.'
                     }
-                    disabled={!canManualDeletePendingEntry(portalMenuRow) || rowActionLoading[portalMenuRow.id] === 'delete'}
-                    onClick={() => void handleDeletePendingRow(portalMenuRow)}
+                    disabled={!canManualDeletePendingEntry(portalMenuRow)}
+                    onClick={() => openPendingDeleteModal(portalMenuRow)}
                     className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:py-2 sm:text-xs"
                   >
-                    {rowActionLoading[portalMenuRow.id] === 'delete' ? (
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    )}
+                    <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     Delete entry
                   </button>
                 ) : null}
@@ -1229,6 +1249,65 @@ export function AdminRegistrations() {
             document.body,
           )
         : null}
+
+      {pendingDeleteRow ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={() => {
+            if (rowActionLoading[pendingDeleteRow.id] === 'delete') return
+            setPendingDeleteRow(null)
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-reg-title"
+            className="w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-100 px-4 py-3">
+              <h3 id="delete-reg-title" className="text-sm font-semibold text-slate-900">
+                Delete pending registration?
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 10 minutes can be removed.</p>
+            </div>
+            <div className="space-y-2 px-4 py-3 text-sm text-slate-800">
+              <p>
+                <span className="font-semibold">{pendingDeleteRow.rider_full_name ?? '—'}</span>
+              </p>
+              <p className="text-xs text-slate-600">{pendingDeleteRow.registrant_email ?? '—'}</p>
+              <p className="text-xs text-slate-600">
+                {pendingDeleteRow.event_title ?? pendingDeleteRow.race_type ?? 'Event'} ·{' '}
+                {pendingDeleteRow.entry_event_type_label ?? formatEventTypeSlugLabel(pendingDeleteRow.entry_event_type_slug)}
+              </p>
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 px-4 py-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteRow(null)}
+                disabled={rowActionLoading[pendingDeleteRow.id] === 'delete'}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const row = pendingDeleteRow
+                  if (row) void confirmPendingDelete(row)
+                }}
+                disabled={rowActionLoading[pendingDeleteRow.id] === 'delete'}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+              >
+                {rowActionLoading[pendingDeleteRow.id] === 'delete' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : null}
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
