@@ -25,3 +25,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Comment on failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Build failed! Check the Actions tab for details.'
+            })
