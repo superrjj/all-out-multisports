@@ -536,27 +536,27 @@ export function RegistrationPayment() {
       <section className="bg-white px-4 py-10 text-slate-900">
         <div className="mx-auto max-w-[760px] space-y-6">
           {!activeRegistrationId && !checkoutPayload ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Start from the{' '}
-              <Link to="/register/info" className="font-semibold underline">
-                registration form
-              </Link>{' '}
-              to fill in your details. Your record is created when you proceed to PayMongo.
-            </div>
+           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Looks like you landed here directly.{' '}
+          <Link to="/register/info" className="font-semibold underline">
+            Start your registration here
+          </Link>{' '}
+          to fill in your details first.
+        </div>
           ) : null}
           {paymentState === 'cancelled' ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Payment was not completed. Return to the registration form if you need to try again with a new checkout.
+              Payment was cancelled. You can close this and try again when you're ready.
             </div>
           ) : null}
           {paymentState === 'failed' ? (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-              Payment failed. Please try again or use a different payment method.
+              Something went wrong with your payment. Please try again or use a different card or payment method.
             </div>
           ) : null}
           {paymentState === 'success' ? (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-              Payment submitted successfully. Redirecting to your post-payment page...
+             Payment received! Taking you to your confirmation page…
             </div>
           ) : null}
           {/* Heading */}
@@ -602,12 +602,10 @@ export function RegistrationPayment() {
           {/* Checkout info */}
           <div className="space-y-2">
             <h2 className="text-lg font-semibold">Secure checkout</h2>
-            <p className="text-sm text-slate-600">
-              You will be redirected to PayMongo to complete payment. Your
-              registration stays pending until webhook confirmation marks the
-              payment as paid.
-            </p>
-            {activeRegistrationId ? <p className="text-xs text-slate-500">Your payment session is linked to your registration.</p> : null}
+           <p className="text-sm text-slate-600">
+            You'll be taken to our secure payment page to complete your registration.
+            Once payment is confirmed, you'll receive a confirmation email shortly after.
+          </p>
           </div>
 
           {/* Agree row — matches original design exactly */}
@@ -648,13 +646,37 @@ export function RegistrationPayment() {
 
           {/* Submit */}
           <button
-            type="button"
-            onClick={() => void onSubmit()}
-            disabled={submitting}
-            className="inline-flex items-center rounded-md bg-[#cfae3f] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? 'Redirecting…' : 'Proceed to PayMongo'}
-          </button>
+          type="button"
+          onClick={() => void onSubmit()}
+          disabled={submitting}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#cfae3f] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {submitting ? (
+            <>
+              <svg
+                className="h-4 w-4 animate-spin"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12" cy="12" r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Redirecting to PayMongo…
+            </>
+          ) : (
+            'Proceed to PayMongo'
+          )}
+        </button>
         </div>
       </section>
 

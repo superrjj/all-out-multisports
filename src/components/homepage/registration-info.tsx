@@ -418,7 +418,7 @@ export function RegistrationInfo() {
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
           <Link
             to={session ? nextPath : `/auth?redirect=${encodeURIComponent(nextPath)}`}
-            className={`mt-3 inline-flex w-full items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold text-black transition sm:w-auto ${
+            className={`mt-3 inline-flex w-full items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold text-black transition ${
               loading ? 'pointer-events-none bg-slate-200 text-slate-500' : 'bg-[#cfae3f] hover:bg-[#dab852]'
             }`}
           >

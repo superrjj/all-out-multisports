@@ -1142,9 +1142,9 @@ export function RegistrationForm() {
             type="button"
             onClick={() => void onSubmit()}
             disabled={submitting}
-            className="inline-flex w-full items-center justify-center rounded-md bg-[#cfae3f] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+            className="inline-flex w-full items-center justify-center rounded-md bg-[#cfae3f] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? 'Saving…' : 'Proceed to Payment'}
+            {submitting ? 'Saving…' : 'Proceed to Checkout'}
           </button>
         </div>
       </div>
