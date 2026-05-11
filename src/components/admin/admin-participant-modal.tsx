@@ -834,9 +834,11 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Import Participants</h3>
               <p className="text-xs text-slate-500">
-                CSV, TSV, or Excel — header row with <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> and{' '}
-                <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code>; optional <code className="rounded bg-slate-100 px-1 text-[11px]">FINAL AGE CATEGORY</code>
-              </p>
+              Upload a CSV, TSV, or Excel file. Make sure it has a header row that includes the{' '}
+              <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> and{' '}
+              <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code> columns.{' '}
+              The <code className="rounded bg-slate-100 px-1 text-[11px]">FINAL AGE CATEGORY</code> column is optional.
+            </p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
@@ -848,9 +850,9 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
         {step === 'upload' && (
           <div className="space-y-4 p-5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Rows with <span className="text-emerald-600">SUCCESS</span> or <span className="text-emerald-600">PAID</span> status import. We'll skip rows already imported to prevent duplicates.
+              Only registrations marked as <span className="text-emerald-600">Success</span> or{' '}
+              <span className="text-emerald-600">Paid</span> will be imported. Entries already in the system will be skipped automatically.
             </p>
-
             <div
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
