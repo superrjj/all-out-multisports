@@ -103,7 +103,7 @@ function RequireAdmin({ children }: { children: ReactNode }) {
       </Shell>
     )
   }
-  if (!session) return <Navigate to="/auth?redirect=%2Fadmin" replace />
+  if (!session) return <Navigate to="/auth" replace />
   if (role !== 'admin') return <Navigate to="/" replace />
   return children
 }
