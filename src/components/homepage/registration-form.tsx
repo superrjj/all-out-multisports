@@ -328,10 +328,9 @@ export function RegistrationForm() {
     clearFieldError('eventTypes')
   }
 
-  const toggleCategory = (raceCategoryId: string) => {
-    setSelectedCategoryIds((prev) =>
-      prev.includes(raceCategoryId) ? prev.filter((id) => id !== raceCategoryId) : [...prev, raceCategoryId],
-    )
+  /** One race category per discipline (radio behavior). */
+  const selectCategoryRadio = (raceCategoryId: string) => {
+    setSelectedCategoryIds([raceCategoryId])
     clearFieldError('category')
   }
 
@@ -534,7 +533,7 @@ export function RegistrationForm() {
     } else if (form.gender.trim() && categoriesEligibleForRider.length === 0) {
       errors.category = 'No categories are available for your gender in this discipline. Please contact the organizer.'
     } else if (selectedCategoryIdsInDiscipline.length === 0) {
-      errors.category = 'Please select at least one category.'
+      errors.category = 'Please select a category.'
     }
     if (!shirtSize) errors.shirtSize = 'Please select a shirt size.'
     if (!selectedEvent) errors.event = 'Please select an event.'
@@ -916,7 +915,7 @@ export function RegistrationForm() {
                               onClick={() => {
                                 setForm((p) => ({ ...p, discipline: g.discipline }))
                                 const allowed = new Set(g.categories.map((c) => c.id))
-                                setSelectedCategoryIds((prev) => prev.filter((id) => allowed.has(id)))
+                                setSelectedCategoryIds((prev) => prev.filter((id) => allowed.has(id)).slice(0, 1))
                               }}
                               className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-semibold transition-all ${
                                 active
@@ -968,7 +967,11 @@ export function RegistrationForm() {
                     </p>
                     )}
 
-                    <div className={`grid grid-cols-1 gap-2 sm:grid-cols-2 rounded-xl border p-3 ${fieldErrors.category ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
+                    <div
+                      role="radiogroup"
+                      aria-label={hasAgeCategories ? 'Age or class category' : 'Race category'}
+                      className={`grid grid-cols-1 gap-2 sm:grid-cols-2 rounded-xl border p-3 ${fieldErrors.category ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 bg-slate-50/60'}`}
+                    >
                       {visibleCategories.map((cat) => {
                         const checked = !noGender && selectedCategoryIds.includes(cat.id)
                         const disabled = noGender
@@ -976,10 +979,10 @@ export function RegistrationForm() {
                           <button
                             key={cat.id}
                             type="button"
-                            role="checkbox"
+                            role="radio"
                             aria-checked={checked}
                             disabled={disabled}
-                            onClick={() => !disabled && toggleCategory(cat.id)}
+                            onClick={() => !disabled && selectCategoryRadio(cat.id)}
                             className={`group relative flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm font-medium transition-all ${
                               disabled
                                 ? 'cursor-default border-slate-200 bg-white text-slate-400'
@@ -990,18 +993,16 @@ export function RegistrationForm() {
                           >
                             <span
                               aria-hidden="true"
-                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all ${
+                              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
                                 disabled
                                   ? 'border-slate-200 bg-slate-100'
                                   : checked
-                                    ? 'border-[#cfae3f] bg-[#cfae3f]'
+                                    ? 'border-[#cfae3f] bg-white'
                                     : 'border-slate-300 bg-white group-hover:border-[#cfae3f]/70'
                               }`}
                             >
-                              {checked && (
-                                <svg className="h-3 w-3 text-black" viewBox="0 0 12 12" fill="none">
-                                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
+                              {checked && !disabled && (
+                                <span className="h-2.5 w-2.5 rounded-full bg-[#cfae3f]" />
                               )}
                             </span>
                             <span className="flex-1 leading-snug">{cat.category_name}</span>
