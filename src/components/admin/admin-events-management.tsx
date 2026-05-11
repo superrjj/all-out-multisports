@@ -2127,9 +2127,12 @@ function EventCategoriesRegistrationModal({
 function formatEventCardRaceTypeSegment(slug: string): string {
   const s = slug.trim().toLowerCase()
   if (!s) return ''
-  if (s === 'itt') return 'ITT'
+  if (s === 'itt' || s === 'individual-time-trial' || s === 'individual_time_trial') return 'Individual Time Trial'
+  if (s === 'criterium') return 'Criterium'
+  if (s === 'road-race' || s === 'road_race') return 'Road Race'
+  if (s === 'mtb' || s === 'mountain-bike' || s === 'mountain_bike') return 'Mountain Bike'
   return s
-    .split('_')
+    .split(/[-_]/)
     .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''))
     .filter(Boolean)
     .join(' ')
@@ -2182,109 +2185,98 @@ function EventCard({
           : `${Math.round(pctNum)}%`
   const venue = String(event.venue ?? 'TBD')
   const raceTypeLabels = eventCardRaceTypeLabels(event.race_type)
+  const feeDisplay = formatMoney(event.registration_fee)
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-white p-3">
-      <div className="grid gap-4 xl:grid-cols-[112px_minmax(0,1fr)_180px_220px] xl:items-center">
-        <img
-          src={String(event.poster_url ?? '/bg2.png')}
-          alt={String(event.title ?? 'Event')}
-          className="h-24 w-28 rounded-lg object-cover flex-shrink-0"
-        />
+    <article className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="grid items-center gap-4 xl:grid-cols-[minmax(0,2.5fr)_minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.7fr)_minmax(0,0.8fr)]">
         <div className="min-w-0">
-          <span className={`inline-block text-[10px] font-bold uppercase tracking-wide ${isPublished ? 'text-emerald-600' : 'text-amber-500'}`}>
-            {isPublished ? 'Published' : 'Draft'}
-          </span>
-          <h3 className="text-3xl font-bold leading-tight text-slate-900">{String(event.title ?? 'Untitled')}</h3>
-          <p className="mt-1 text-sm text-slate-500 line-clamp-1">{String(event.description ?? '')}</p>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-           <span className="flex items-center gap-1">
-            <CalendarDays className="h-3.5 w-3.5" />
-            {formatDate(event.event_date)}
-            {event.end_date ? ` – ${formatDate(event.end_date)}` : ''}
-          </span>
-            <span className="flex items-center gap-1">
-              <Clock3 className="h-3.5 w-3.5" />
-              {formatTime(event.start_time)} – {formatTime(event.end_time)}
-            </span>
-            <span className="flex items-center gap-1"><MapPinned className="h-3.5 w-3.5" />{venue}</span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
-            <span className="inline-flex flex-wrap items-center gap-1.5" title={String(event.race_type ?? '')}>
-              {raceTypeLabels.map((label, i) => (
-                <span
-                  key={`${label}-${i}`}
-                  className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700"
-                >
-                  {label}
-                </span>
-              ))}
-            </span>
-            <span className="flex items-center gap-1">{formatMoney(event.registration_fee)}</span>
-            <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{riderLimit.toLocaleString()} Riders Limit</span>
+          <div className="flex items-start gap-3">
+            <img
+              src={String(event.poster_url ?? '/bg2.png')}
+              alt={String(event.title ?? 'Event')}
+              className="h-16 w-16 rounded object-cover"
+            />
+            <div className="min-w-0">
+              <h3 className="truncate text-2xl font-semibold leading-tight text-slate-900">{String(event.title ?? 'Untitled')}</h3>
+              <div className="mt-1 flex flex-wrap items-center gap-1" title={String(event.race_type ?? '')}>
+                {raceTypeLabels.map((label, i) => (
+                  <span
+                    key={`${label}-${i}`}
+                    className="inline-flex rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-700"
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                <MapPinned className="h-3.5 w-3.5" />
+                {venue}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="xl:pr-3">
-          <p className="text-xs text-slate-500">Registration Deadline</p>
-          <p className="text-xs font-medium text-red-500">{formatDate(event.registration_deadline ?? event.event_date)}</p>
-          <div className="mt-2">
-            <p className="text-xs text-slate-500">Paid registrations</p>
-            <p className="text-xs font-bold text-blue-600">
-              {registrations.toLocaleString()} / {riderLimit.toLocaleString()}
-            </p>
-            <div className="mt-1 h-1.5 w-full rounded-full bg-slate-200">
-              <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${barPct}%` }} />
-            </div>
-            <p className="text-right text-[10px] text-slate-400 mt-0.5">{pctLabel}</p>
+        <div className="text-xs text-slate-700">
+          <p className="font-medium text-slate-800">
+            {formatDate(event.event_date)}
+            {event.end_date ? ` – ${formatDate(event.end_date)}` : ''}
+          </p>
+          <p className="mt-1 flex items-center gap-1 text-slate-500">
+            <Clock3 className="h-3.5 w-3.5" />
+            {formatTime(event.start_time)} – {formatTime(event.end_time)}
+          </p>
+        </div>
+
+        <div className="text-xs">
+          <p className="font-medium text-red-500">{formatDate(event.registration_deadline ?? event.event_date)}</p>
+          <p className="mt-1 text-slate-500" title={`Fee: ${feeDisplay}`}>Paid registrations</p>
+          <p className="font-semibold text-blue-600">
+            {registrations.toLocaleString()} / {riderLimit.toLocaleString()}
+          </p>
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center gap-1 text-xs text-slate-500">
+            <Users className="h-3.5 w-3.5" />
+            {pctLabel}
           </div>
+          <div className="h-1.5 w-full rounded-full bg-slate-200">
+            <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${barPct}%` }} />
+          </div>
+          <span
+            className={`mt-3 inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+              isPublished ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+            }`}
+          >
+            {isPublished ? 'Published' : 'Draft'}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
           <button
             type="button"
             disabled={busy}
             onClick={onViewRegistrations}
-            className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <UserCheck className="h-3.5 w-3.5" /> View Registrations
+            <UserCheck className="h-3.5 w-3.5" />
+            View
           </button>
-        </div>
-
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-1.5">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onEdit(event)}
-              className="inline-flex items-center justify-center gap-1 rounded-md border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Pencil className="h-3 w-3" /> Edit
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onDuplicate(event)}
-              className="inline-flex items-center justify-center gap-1 rounded-md border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Copy className="h-3 w-3" /> Duplicate
-            </button>
+          <div className="hidden">
+            <button type="button" onClick={() => onDuplicate(event)}><Copy className="h-3 w-3" /></button>
+            <button type="button" onClick={() => onTogglePublish(event)}>{isPublished ? 'Unpublish' : 'Publish'}</button>
+            <button type="button" onClick={() => onDelete(event)}>Delete</button>
           </div>
           <button
             type="button"
             disabled={busy}
-            onClick={() => onTogglePublish(event)}
-            className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={() => onEdit(event)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            title="More actions"
+            aria-label="More actions"
           >
-            <span className="text-xs font-medium text-slate-700">{isPublished ? 'Published' : 'Unpublished'}</span>
-            <span className={`relative inline-flex h-5 w-9 rounded-full transition-colors ${isPublished ? 'bg-blue-600' : 'bg-slate-300'}`}>
-              <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isPublished ? 'translate-x-4' : ''}`} />
-            </span>
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onDelete(event)}
-            className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-red-100 px-3 py-1 text-xs font-semibold text-red-500 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Trash2 className="h-3 w-3" /> Delete
+            ⋮
           </button>
         </div>
       </div>

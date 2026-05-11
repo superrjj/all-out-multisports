@@ -23,6 +23,7 @@ import {
   AdminSystemLogs,
 } from '../components/admin/admin-pages'
 import { Hero } from '../components/homepage/hero'
+import { PageNotCreated } from '../components/homepage/page-not-created'
 import { RegistrationForm } from '../components/homepage/registration-form'
 import { RegistrationInfo } from '../components/homepage/registration-info'
 import { RegistrationPayment } from '../components/homepage/registration-payment'
@@ -201,6 +202,10 @@ export function AppRoutes() {
         }
       />
       <Route path="/auth" element={<Shell><AuthPage /></Shell>} />
+      <Route path="/events" element={<Shell><PageNotCreated pageName="Events" /></Shell>} />
+      <Route path="/results" element={<Shell><PageNotCreated pageName="Results" /></Shell>} />
+      <Route path="/gallery" element={<Shell><PageNotCreated pageName="Gallery" /></Shell>} />
+      <Route path="/about" element={<Shell><PageNotCreated pageName="About" /></Shell>} />
       <Route
         path="/register/info"
         element={

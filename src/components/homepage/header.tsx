@@ -6,19 +6,15 @@ import { useAuth } from '../../hooks/useAuth'
 
 const navItems = [
   { label: 'Home', to: '/' },
-  { label: 'Events', to: '/events', pending: true },
-  { label: 'Results', to: '/results', pending: true },
-  { label: 'Gallery', to: '/gallery', pending: true },
-  { label: 'About', to: '#about', pending: true },
+  { label: 'Events', to: '/events' },
+  { label: 'Results', to: '/results' },
+  { label: 'Gallery', to: '/gallery' },
+  { label: 'About', to: '/about' },
 ]
 
 export function Header() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { session, logout, role } = useAuth()
-
-  const showPendingPageToast = () => {
-    toast.info('Oops! This page is not created yet.')
-  }
 
   const onLogout = async () => {
     try {
@@ -61,16 +57,7 @@ export function Header() {
               </NavLink>
             ) : (
               navItems.map((item) =>
-                item.pending ? (
-                  <button
-                    key={item.label}
-                    type="button"
-                    className="rounded-full px-2.5 py-2 text-slate-700 transition-colors duration-150 hover:text-slate-950"
-                    onClick={showPendingPageToast}
-                  >
-                    {item.label}
-                  </button>
-                ) : item.to.startsWith('#') ? (
+                item.to.startsWith('#') ? (
                   <a
                     key={item.label}
                     href={item.to}
@@ -155,19 +142,7 @@ export function Header() {
               </NavLink>
             ) : (
               navItems.map((item) =>
-                item.pending ? (
-                  <button
-                    key={item.label}
-                    type="button"
-                    className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-900"
-                    onClick={() => {
-                      showPendingPageToast()
-                      setMobileOpen(false)
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ) : item.to.startsWith('#') ? (
+                item.to.startsWith('#') ? (
                   <a
                     key={item.label}
                     href={item.to}
