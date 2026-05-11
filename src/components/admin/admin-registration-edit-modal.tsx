@@ -26,7 +26,6 @@ type EditForm = {
   emergencyContactName: string
   emergencyContactNumber: string
   teamName: string
-  ageCategory: string
   jerseySize: string
   providerReference: string
   paymentOrderStatus: string
@@ -46,10 +45,18 @@ const emptyForm: EditForm = {
   emergencyContactName: '',
   emergencyContactNumber: '',
   teamName: '',
-  ageCategory: '',
   jerseySize: '',
   providerReference: '',
   paymentOrderStatus: '',
+}
+
+function toDateInputValue(raw: string) {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  // Accept either "YYYY-MM-DD" or ISO timestamps and return a date-input friendly value.
+  const isoPrefix = s.slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoPrefix)) return isoPrefix
+  return ''
 }
 
 function titleFromSlug(slug: string) {
@@ -94,13 +101,12 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
           firstName: String(rider?.first_name ?? ''),
           lastName: String(rider?.last_name ?? ''),
           gender: String(rider?.gender ?? ''),
-          birthDate: String(rider?.birth_date ?? ''),
+          birthDate: toDateInputValue(String(rider?.birth_date ?? '')),
           address: String(rider?.address ?? ''),
           contactNumber: String(rider?.contact_number ?? ''),
           emergencyContactName: String(rider?.emergency_contact_name ?? ''),
           emergencyContactNumber: String(rider?.emergency_contact_number ?? ''),
           teamName: String(rider?.team_name ?? ''),
-          ageCategory: String(rider?.age_category ?? ''),
           jerseySize: String(rider?.jersey_size ?? ''),
           providerReference: String(order?.provider_reference ?? ''),
           paymentOrderStatus: String(order?.status ?? ''),
@@ -155,6 +161,23 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
 
   const categoryById = useMemo(() => new Map(categoryOptions.map((c) => [c.id, c])), [categoryOptions])
 
+  const genderOptions = [
+    { value: 'MALE', label: 'MALE' },
+    { value: 'FEMALE', label: 'FEMALE' },
+  ] as const
+
+  const jerseyOptions = ['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large'].map((size) => ({
+    value: size,
+    label: size,
+  }))
+
+  const paymentStatusOptions = [
+    { value: 'paid', label: 'Paid' },
+    { value: 'pending', label: 'Pending' },
+    { value: 'failed', label: 'Failed' },
+    { value: 'refunded', label: 'Refunded' },
+  ]
+
   const update = (key: keyof EditForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
@@ -165,51 +188,40 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
     try {
       const category = categoryById.get(form.raceCategoryId)
       const disciplineNext = String(category?.discipline ?? '').trim()
-      const categoryNext = String(category?.category_name ?? form.ageCategory ?? '').trim()
+      const categoryNext = String(category?.category_name ?? '').trim()
       const eventTypeLabelNext = form.entryEventTypeLabel.trim() || titleFromSlug(form.entryEventTypeSlug)
 
-      const { error: regErr } = await supabase
-        .from('registration_forms')
-        .update({
-          registrant_email: form.registrantEmail.trim() || null,
-          entry_event_type_slug: form.entryEventTypeSlug.trim() || null,
-          entry_event_type_label: eventTypeLabelNext || null,
-          race_category_id: form.raceCategoryId.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', registrationId)
-      if (regErr) throw regErr
-
-      const { error: riderErr } = await supabase
-        .from('registration_rider_details')
-        .update({
-          first_name: form.firstName.trim(),
-          last_name: form.lastName.trim(),
-          gender: form.gender.trim() || null,
-          birth_date: form.birthDate.trim() || null,
-          address: form.address.trim() || null,
-          contact_number: form.contactNumber.trim() || null,
-          emergency_contact_name: form.emergencyContactName.trim() || null,
-          emergency_contact_number: form.emergencyContactNumber.trim() || null,
-          team_name: form.teamName.trim() || null,
-          discipline: disciplineNext || null,
-          age_category: categoryNext || null,
-          jersey_size: form.jerseySize.trim() || null,
-        })
-        .eq('registration_id', registrationId)
-      if (riderErr) throw riderErr
-
-      if (paymentOrderId.trim()) {
-        const { error: payErr } = await supabase
-          .from('payment_orders')
-          .update({
-            provider_reference: form.providerReference.trim() || null,
-            status: form.paymentOrderStatus.trim() || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', paymentOrderId.trim())
-        if (payErr) throw payErr
-      }
+      const result = await adminApi.adminUpdateRegistration({
+        registrationId,
+        patch: {
+          registrantEmail: form.registrantEmail,
+          entryEventTypeSlug: form.entryEventTypeSlug,
+          entryEventTypeLabel: eventTypeLabelNext,
+          raceCategoryId: form.raceCategoryId,
+          ageCategoryLabel: categoryNext,
+          discipline: disciplineNext,
+        },
+        rider: {
+          firstName: form.firstName,
+          lastName: form.lastName,
+          gender: form.gender,
+          birthDate: form.birthDate,
+          address: form.address,
+          contactNumber: form.contactNumber,
+          emergencyContactName: form.emergencyContactName,
+          emergencyContactNumber: form.emergencyContactNumber,
+          teamName: form.teamName,
+          jerseySize: form.jerseySize,
+        },
+        payment: paymentOrderId.trim()
+          ? {
+              paymentOrderId,
+              providerReference: form.providerReference,
+              paymentOrderStatus: form.paymentOrderStatus,
+            }
+          : undefined,
+      })
+      if (result?.error) throw new Error(result.error)
 
       onSaved()
       onClose()
@@ -240,7 +252,7 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
         ) : (
           <>
             <div className="max-h-[70vh] space-y-5 overflow-y-auto p-5">
-              <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-[0_14px_30px_-20px_rgba(15,23,42,0.45),0_6px_14px_-10px_rgba(15,23,42,0.3)]">
+              <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Registration</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="Registrant Email" value={form.registrantEmail} onChange={(v) => update('registrantEmail', v)} />
@@ -259,43 +271,53 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
                     value={form.raceCategoryId}
                     onChange={(v) => {
                       update('raceCategoryId', v)
-                      const cat = categoryById.get(v)
-                      if (cat) {
-                        update('ageCategory', String(cat.category_name ?? ''))
-                      }
                     }}
                     options={categoryOptions.map((c) => ({
                       value: c.id,
                       label: `${String(c.category_name ?? '—')} · ${String(c.discipline ?? '—')}`,
                     }))}
                   />
-                  <Field label="Category Label" value={form.ageCategory} onChange={(v) => update('ageCategory', v)} />
                 </div>
               </section>
 
-              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_14px_30px_-20px_rgba(15,23,42,0.45),0_6px_14px_-10px_rgba(15,23,42,0.3)]">
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Rider Information</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="First Name" value={form.firstName} onChange={(v) => update('firstName', v)} />
                   <Field label="Last Name" value={form.lastName} onChange={(v) => update('lastName', v)} />
-                  <Field label="Gender" value={form.gender} onChange={(v) => update('gender', v)} />
+                  <SelectField
+                    label="Gender"
+                    value={form.gender}
+                    onChange={(v) => update('gender', v)}
+                    options={genderOptions.map((g) => ({ value: g.value, label: g.label }))}
+                  />
                   <Field label="Date of Birth" type="date" value={form.birthDate} onChange={(v) => update('birthDate', v)} />
                   <Field label="Contact Number" value={form.contactNumber} onChange={(v) => update('contactNumber', v)} />
                   <Field label="Emergency Contact Name" value={form.emergencyContactName} onChange={(v) => update('emergencyContactName', v)} />
                   <Field label="Emergency Contact Number" value={form.emergencyContactNumber} onChange={(v) => update('emergencyContactNumber', v)} />
                   <Field label="Team Name" value={form.teamName} onChange={(v) => update('teamName', v)} />
-                  <Field label="Jersey Size" value={form.jerseySize} onChange={(v) => update('jerseySize', v)} />
+                  <SelectField
+                    label="Jersey Size"
+                    value={form.jerseySize}
+                    onChange={(v) => update('jerseySize', v)}
+                    options={jerseyOptions}
+                  />
                   <div className="md:col-span-2">
                     <Field label="Address" value={form.address} onChange={(v) => update('address', v)} />
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 shadow-[0_14px_30px_-20px_rgba(15,23,42,0.45),0_6px_14px_-10px_rgba(15,23,42,0.3)]">
+              <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Payment</p>
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="Payment ID (provider_reference)" value={form.providerReference} onChange={(v) => update('providerReference', v)} />
-                  <Field label="Payment Order Status" value={form.paymentOrderStatus} onChange={(v) => update('paymentOrderStatus', v)} />
+                  <SelectField
+                    label="Payment Order Status"
+                    value={form.paymentOrderStatus}
+                    onChange={(v) => update('paymentOrderStatus', v)}
+                    options={paymentStatusOptions}
+                  />
                 </div>
               </section>
 

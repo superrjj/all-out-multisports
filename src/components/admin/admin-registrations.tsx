@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Mail, Printer, Search, Users, NotebookPen, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Eye, Loader2, Mail, NotebookPen, Pencil, Printer, Search, Users, X } from 'lucide-react'
 import { ImportParticipantsModal } from './admin-participant-modal'
 import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
@@ -111,12 +111,15 @@ export function AdminRegistrations() {
   const [ledgerLoading, setLedgerLoading] = useState(false)
   const [ledgerError, setLedgerError] = useState('')
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | null>>({})
-  const [autobibRunning, setAutobibRunning] = useState(false)
   const [editingRegistrationId, setEditingRegistrationId] = useState<string | null>(null)
   type AdminActionBanner = { text: string; tone: 'info' | 'success' | 'warning' | 'error' }
   const [actionBanner, setActionBanner] = useState<AdminActionBanner | null>(null)
-  /** Prevents overlapping auto-bib requests and duplicate effect runs tied to loading state updates. */
-  const autobibQueuedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!actionBanner) return
+    const t = window.setTimeout(() => setActionBanner(null), 1500)
+    return () => window.clearTimeout(t)
+  }, [actionBanner])
 
   function fetchData() {
     return adminApi
@@ -545,99 +548,57 @@ export function AdminRegistrations() {
     }
   }
 
-  async function handleAutoGenerateBibForMissingRows() {
-    if (autobibRunning) return
-    const candidates = rows.filter((r) => {
-      const hasBib = String(r.bib_number ?? '').trim().length > 0
-      const hasReferenceNo = isPaymongoPaymentReferenceId(getEffectiveProviderReference(r))
-      return !hasBib && hasReferenceNo && !autobibQueuedRef.current.has(r.id)
-    })
+  async function handleGenerateBibForRow(row: AdminRegistrationRow) {
+    if (rowActionLoading[row.id]) return
 
-    if (candidates.length === 0) {
+    const hasBib = String(row.bib_number ?? '').trim().length > 0
+    const payRefOk = isPaymongoPaymentReferenceId(getEffectiveProviderReference(row))
+    if (hasBib) {
+      setActionBanner({ text: 'This registration already has a bib number.', tone: 'info' })
+      return
+    }
+    if (!payRefOk) {
       setActionBanner({
-        text: 'No eligible registrations found. Bibs are generated only for rows without bib numbers and with a valid PayMongo Reference No. (pay_...).',
+        text: 'Needs a PayMongo Reference No. (pay_...) on this row before a bib can be assigned.',
         tone: 'info',
       })
       return
     }
 
-    setAutobibRunning(true)
-    setActionBanner({
-      text: `Generating bib numbers for ${candidates.length} registration(s)...`,
-      tone: 'info',
-    })
+    const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
+    setActionBanner(null)
+    setRowActionLoading((prev) => ({ ...prev, [row.id]: 'autobib' }))
+    try {
+      const result = await adminApi.adminGenerateBib(row.id)
+      if (result?.error) throw new Error(result.error)
+      const nextBib = String(result?.bib_number ?? '').trim()
+      if (!nextBib) throw new Error('Bib assignment returned empty bib number.')
 
-    let successCount = 0
-    const failures: { label: string; message: string }[] = []
-    const certificateFailures: { label: string; message: string }[] = []
-
-    for (const row of candidates) {
-      autobibQueuedRef.current.add(row.id)
-      setRowActionLoading((prev) => ({ ...prev, [row.id]: 'autobib' }))
-      const label = [row.rider_full_name, row.registrant_email].filter(Boolean).join(' · ') || row.id.slice(0, 8)
-
+      let certWarning = ''
       try {
-        const result = await adminApi.adminGenerateBib(row.id)
-        if (result?.error) throw new Error(result.error)
-        const nextBib = String(result?.bib_number ?? '').trim()
-        if (!nextBib) throw new Error('Bib assignment returned empty bib number.')
-
-        try {
-          await generateAndUploadAdminCertificate(row.id)
-        } catch (certErr) {
-          certificateFailures.push({
-            label,
-            message: (certErr as Error).message || 'Certificate file was not generated.',
-          })
-        }
-
-        successCount += 1
-        setRows((prev) =>
-          prev.map((item) =>
-            item.id === row.id
-              ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
-              : item,
-          ),
-        )
-      } catch (e) {
-        failures.push({
-          label,
-          message: (e as Error).message || 'Failed to generate bib number.',
-        })
-      } finally {
-        autobibQueuedRef.current.delete(row.id)
-        setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
+        await generateAndUploadAdminCertificate(row.id)
+      } catch (certErr) {
+        certWarning = ` Certificate: ${(certErr as Error).message || 'file was not stored.'}`
       }
-    }
 
-    setAutobibRunning(false)
-
-    if (failures.length === 0 && successCount > 0) {
-      const certNote =
-        certificateFailures.length > 0
-          ? ` Certificate storage pending for ${certificateFailures.length} rider(s).`
-          : ''
+      setRows((prev) =>
+        prev.map((item) =>
+          item.id === row.id
+            ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
+            : item,
+        ),
+      )
       setActionBanner({
-        text: `Generated bib numbers for ${successCount} registration${successCount === 1 ? '' : 's'}.${certNote}`,
-        tone: certificateFailures.length > 0 ? 'warning' : 'success',
+        text: `Bib ${nextBib} assigned for ${label}.${certWarning}`,
+        tone: certWarning ? 'warning' : 'success',
       })
-    } else if (failures.length > 0 && successCount > 0) {
-      const preview = failures
-        .slice(0, 2)
-        .map((f) => `${f.label} — ${f.message}`)
-        .join(' ')
+    } catch (e) {
       setActionBanner({
-        text: `Generated bibs for ${successCount} rider(s). ${failures.length} failed: ${preview}${failures.length > 2 ? ` (+${failures.length - 2} more)` : ''}`,
-        tone: 'warning',
-      })
-    } else if (failures.length > 0) {
-      setActionBanner({
-        text: failures
-          .slice(0, 3)
-          .map((f) => `${f.label}: ${f.message}`)
-          .join(' · ') + (failures.length > 3 ? ` (+${failures.length - 3} more)` : ''),
+        text: `${label}: ${(e as Error).message || 'Failed to generate bib number.'}`,
         tone: 'error',
       })
+    } finally {
+      setRowActionLoading((prev) => ({ ...prev, [row.id]: null }))
     }
   }
 
@@ -673,15 +634,6 @@ export function AdminRegistrations() {
             >
               <ClipboardList className="h-3.5 w-3.5" />
               View Legend
-            </button>
-            <button
-              type="button"
-              onClick={() => { void handleAutoGenerateBibForMissingRows() }}
-              disabled={autobibRunning}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#1e4a8e] px-3 py-2 text-xs font-semibold text-white hover:bg-[#163b72] disabled:opacity-60"
-            >
-              <NotebookPen className="h-3.5 w-3.5" />
-              {autobibRunning ? 'Generating Bibs...' : 'Auto Generate Bib'}
             </button>
           </div>
         </div>
@@ -732,8 +684,8 @@ export function AdminRegistrations() {
 
         {error ? <p className="px-4 py-3 text-sm text-rose-600">{error}</p> : null}
         {actionBanner ? (
-          <p
-            className={`mx-4 mb-2 rounded-md px-3 py-2 text-xs ${
+          <div
+            className={`mx-4 mb-2 flex items-start justify-between gap-3 rounded-md px-3 py-2 text-xs ${
               actionBanner.tone === 'success'
                 ? 'bg-emerald-50 text-emerald-900'
                 : actionBanner.tone === 'warning'
@@ -742,9 +694,19 @@ export function AdminRegistrations() {
                     ? 'bg-rose-50 text-rose-800'
                     : 'bg-slate-50 text-slate-700'
             }`}
+            role="status"
           >
-            {actionBanner.text}
-          </p>
+            <span className="min-w-0 flex-1">{actionBanner.text}</span>
+            <button
+              type="button"
+              aria-label="Dismiss message"
+              title="Dismiss"
+              onClick={() => setActionBanner(null)}
+              className="shrink-0 rounded p-1 text-current/70 hover:bg-black/5 hover:text-current"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </div>
         ) : null}
 
         <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
@@ -835,9 +797,17 @@ export function AdminRegistrations() {
                               <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
                             </span>
                           ) : null}
-                          <span title={isPaid ? undefined : 'Bib is assigned only after payment is confirmed.'}>
-                            {isPaid && r.bib_number
-                              ? r.bib_number
+                          <span
+                            title={
+                              String(r.bib_number ?? '').trim()
+                                ? undefined
+                                : isPaid
+                                  ? undefined
+                                  : 'Usually shown after paid; generate manually when Reference No. (pay_...) is set.'
+                            }
+                          >
+                            {String(r.bib_number ?? '').trim()
+                              ? String(r.bib_number).trim()
                               : rowActionLoading[r.id] === 'autobib'
                                 ? 'Generating...'
                                 : '—'}
@@ -845,28 +815,64 @@ export function AdminRegistrations() {
                         </span>
                       </td>
                       <td className="py-3 pr-4 text-right">
-                        <div className="inline-flex items-center gap-1">
+                        <div className="inline-flex items-center justify-end gap-0.5">
                           <button
                             type="button"
-                            onClick={() => void handleSendQr(r.id)}
-                            disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
-                            className="inline-flex items-center gap-1 rounded-md border border-emerald-200 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+                            aria-label={
+                              rowActionLoading[r.id] === 'autobib' ? 'Generating bib number' : 'Generate bib number'
+                            }
+                            title={
+                              rowActionLoading[r.id] === 'autobib'
+                                ? 'Generating bib…'
+                                : referenceNo && !String(r.bib_number ?? '').trim()
+                                  ? 'Generate bib · Assign category/discipline details first when needed.'
+                                  : 'Generate bib number'
+                            }
+                            onClick={() => void handleGenerateBibForRow(r)}
+                            disabled={
+                              rowActionLoading[r.id] != null
+                              || Boolean(String(r.bib_number ?? '').trim())
+                              || !referenceNo
+                            }
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#1e4a8e]/30 text-[#1e4a8e] transition hover:bg-[#1e4a8e]/10 disabled:opacity-50"
                           >
-                            <Mail className="h-3 w-3" />
-                            {rowActionLoading[r.id] === 'email' ? 'Sending…' : 'Send QR'}
+                            {rowActionLoading[r.id] === 'autobib' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                            ) : (
+                              <NotebookPen className="h-4 w-4" aria-hidden />
+                            )}
                           </button>
                           <button
                             type="button"
-                            onClick={() => setEditingRegistrationId(r.id)}
-                            className="inline-flex items-center gap-1 rounded-md border border-sky-200 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-50"
+                            aria-label={rowActionLoading[r.id] === 'email' ? 'Sending QR email' : 'Send QR code email'}
+                            title={rowActionLoading[r.id] === 'email' ? 'Sending email…' : 'Send QR code email'}
+                            onClick={() => void handleSendQr(r.id)}
+                            disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
                           >
-                            Edit
+                            {rowActionLoading[r.id] === 'email' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                            ) : (
+                              <Mail className="h-4 w-4" aria-hidden />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Edit registration"
+                            title="Edit registration"
+                            onClick={() => setEditingRegistrationId(r.id)}
+                            disabled={rowActionLoading[r.id] != null}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-200 text-sky-700 transition hover:bg-sky-50 disabled:opacity-50"
+                          >
+                            <Pencil className="h-4 w-4" aria-hidden />
                           </button>
                           <Link
                             to={`/admin/registrations/${encodeURIComponent(r.id)}`}
-                            className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                            aria-label="View registration"
+                            title="View registration"
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-700 transition hover:bg-slate-50"
                           >
-                            View
+                            <Eye className="h-4 w-4" aria-hidden />
                           </Link>
                         </div>
                       </td>

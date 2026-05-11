@@ -383,6 +383,41 @@ export const adminApi = {
     return data as { ok: boolean; bib_number?: string; provider_reference?: string; error?: string }
   },
 
+  async adminUpdateRegistration(input: {
+    registrationId: string
+    patch: {
+      registrantEmail: string
+      entryEventTypeSlug: string
+      entryEventTypeLabel: string
+      raceCategoryId: string
+      ageCategoryLabel?: string
+      discipline?: string
+    }
+    rider: {
+      firstName: string
+      lastName: string
+      gender: string
+      birthDate: string
+      address: string
+      contactNumber: string
+      emergencyContactName: string
+      emergencyContactNumber: string
+      teamName: string
+      jerseySize: string
+    }
+    payment?: {
+      paymentOrderId?: string
+      providerReference?: string
+      paymentOrderStatus?: string
+    }
+  }) {
+    const { data, error } = await supabase.functions.invoke('admin-update-registration', {
+      body: input,
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not save registration changes.'))
+    return data as { ok: boolean; error?: string }
+  },
+
   async adminSendRaceKitEmail(registrationId: string) {
     const { data, error } = await supabase.functions.invoke('send-race-claim-certificate-email', {
       body: { registrationId, registrationIds: [registrationId], adminSend: true, forceResend: true },

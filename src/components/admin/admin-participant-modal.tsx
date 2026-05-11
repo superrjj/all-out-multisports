@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { X, Upload, FileText, AlertTriangle, CheckCircle2, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase as supabaseAdmin } from '../../lib/supabase'
 
@@ -15,6 +16,8 @@ type ParsedRow = {
   isITT: boolean
   paymongoId?: string
   amount: number
+  /** Google Sheets "FINAL AGE CATEGORY" (optional) — used first for race category matching. */
+  finalAgeCategory: string
 
   cFirstName: string; cLastName: string; cGender: string; cDateOfBirth: string
   cAddress: string; cContactNumber: string; cEmergencyContact: string; cEmergencyContactNumber: string
@@ -25,6 +28,10 @@ type ParsedRow = {
   ittAddress: string; ittContactNumber: string; ittEmergencyContact: string; ittEmergencyContactNumber: string
   ittTeamName: string; ittCategory: string; ittDiscipline: string; ittEventShirt: string
   ittBirthYear: string
+
+  /** Existing imports (checked via payment_orders.merchant_reference). */
+  existsCriterium?: boolean
+  existsITT?: boolean
 }
 
 type ImportResult = {
@@ -36,7 +43,7 @@ type ImportResult = {
   registrationId?: string
 }
 
-// ─── CSV parser ───────────────────────────────────────────────────────────────
+// ─── Delimited + Excel parser ─────────────────────────────────────────────────
 
 function splitCSVLine(line: string): string[] {
   const cols: string[] = []
@@ -52,55 +59,140 @@ function splitCSVLine(line: string): string[] {
   return cols
 }
 
-/**
- * Column map (0-indexed):
- *  0   PAYMENT ID        ← PayMongo ID
- *  1   PAYMENT STATUS
- *  2   Submission ID
- *  3   Respondent ID
- *  4   Submitted at
- *  5   EMAIL
- *  6   EVENT
- *  7   EVENT (CRITERIUM)
- *  8   EVENT (INDIVIDUAL TIME TRIAL)
- *
- * Criterium-only (9–22):
- *  9  First Name1  10  Last Name1  11  Gender1  12  Date Of Birth1
- *  13 Address1     14  Contact Number  15  Emergency Contact
- *  16 Emergency Contact Number   17  Team Name1
- *  18 Category1   19  Discipline1   20  Birth Year1   21  Race Age1   22  Event Shirt1
- *
- * ITT / shared both-event (23–36):
- *  23 First Name  24  Last Name  25  Gender  26  Date Of Birth
- *  27 Address     28  Contact Number  29  Emergency Contact
- *  30 Emergency Contact Number   31  Team Name
- *  32 ITT Category  33  Discipline  34  Birth Year  35  Race Age 2  36  ITT Event Shirt
- *
- * Both-events criterium-specific (37–39):
- *  37 Criterium Category   38  Discipline   39  Criterium Event Shirt
- *
- *  40 Proof of Payment
- *  41 Price  ← amount
- */
-function parseTallyCSV(text: string): ParsedRow[] {
-  const lines = text.split('\n').filter((l) => l.trim())
-  if (lines.length < 2) return []
+function splitTSVLine(line: string): string[] {
+  return line.split('\t').map((cell) => String(cell ?? '').trim())
+}
 
+function normalizeHeaderLabel(raw: string): string {
+  return String(raw ?? '')
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function detectPrimaryDelimiter(sampleLine: string): ',' | '\t' {
+  const tabs = (sampleLine.match(/\t/g) ?? []).length
+  const commas = (sampleLine.match(/,/g) ?? []).length
+  return tabs > commas ? '\t' : ','
+}
+
+function splitMatrixFromText(text: string): string[][] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim())
+  if (!lines.length) return []
+  const delim = detectPrimaryDelimiter(lines[0])
+  return lines.map((line) => (delim === '\t' ? splitTSVLine(line) : splitCSVLine(line)))
+}
+
+async function matrixFromXlsxFile(file: File): Promise<string[][]> {
+  const buf = await file.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true, raw: false })
+  const sheetName = wb.SheetNames[0]
+  if (!sheetName) return []
+  const sheet = wb.Sheets[sheetName]
+  const raw = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: '',
+    blankrows: false,
+    raw: false,
+  }) as unknown[]
+  return raw.map((row) =>
+    (Array.isArray(row) ? row : []).map((cell) => stringifySheetCell(cell)),
+  )
+}
+
+function stringifySheetCell(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (v instanceof Date) {
+    const y = v.getFullYear()
+    const m = String(v.getMonth() + 1).padStart(2, '0')
+    const d = String(v.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return String(v).trim()
+}
+
+function cellBoolTruthy(v: string): boolean {
+  const s = String(v ?? '').trim().toUpperCase()
+  return s === 'TRUE' || s === '1' || s === 'YES'
+}
+
+/** Importable SUCCESS + onsite cash settlements (matches common Tally/Google Sheets statuses). */
+function isImportablePaymentStatus(raw: string): boolean {
+  const s = normalizeHeaderLabel(raw).replace(/\s+/g, ' ')
+  if (s === 'success') return true
+  if (s === 'paid') return true
+  return false
+}
+
+/** Find PAYMENT ID column — all legacy rider columns shift with this anchor. */
+function resolvePaymentIdColumnIndex(headers: string[]): number {
+  const n = headers.map(normalizeHeaderLabel)
+  const candidates = ['payment id']
+  let best = -1
+  for (let i = 0; i < n.length; i++) {
+    for (const c of candidates) {
+      if (n[i] === c) return i
+    }
+  }
+  for (let i = 0; i < n.length; i++) {
+    for (const c of candidates) {
+      if (n[i].includes(c) && best < 0) best = i
+    }
+  }
+  return best
+}
+
+function resolveFinalAgeCategoryColumnIndex(headers: string[]): number {
+  const n = headers.map(normalizeHeaderLabel)
+  const key = 'final age category'
+  for (let i = 0; i < n.length; i++) {
+    if (n[i] === key || n[i].includes(key)) return i
+  }
+  return -1
+}
+
+/** @param anchor — column index where PAYMENT ID starts (legacy col 0) */
+function cellAt(cols: string[], anchor: number, legacyIndex: number): string {
+  return String(cols[anchor + legacyIndex] ?? '').trim()
+}
+
+/**
+ * Column map relative to PAYMENT ID anchor (= legacy index 0):
+ *  0…8 meta + event flags,
+ *  9–22 criterium-only,
+ *  23–36 ITT,
+ *  37–39 criterium cols when BOTH,
+ *  40 Proof of Payment,
+ *  41 Price
+ */
+function parseTallyRows(matrix: string[][]): ParsedRow[] {
+  if (matrix.length < 2) return []
+
+  const headers = matrix[0] ?? []
+  const payAnchor = resolvePaymentIdColumnIndex(headers)
+  if (payAnchor < 0) return []
+
+  const finalAgeIdx = resolveFinalAgeCategoryColumnIndex(headers)
   const rows: ParsedRow[] = []
 
-  for (const line of lines.slice(1)) {
-    const c = splitCSVLine(line)
+  for (const cols of matrix.slice(1)) {
+    if (!cols.some((x) => String(x ?? '').trim())) continue
 
-    const paymongoId = (c[0] ?? '').trim() || undefined
-    const paymentStatus = (c[1] ?? '').trim()
-    const submissionId = (c[2] ?? '').trim()
-    const email = (c[5] ?? '').trim()
-    const isCriterium = (c[7] ?? '').toUpperCase() === 'TRUE'
-    const isITT = (c[8] ?? '').toUpperCase() === 'TRUE'
-    const amount = parseFloat((c[41] ?? '0').replace(/[^0-9.]/g, '')) || 0
+    const paymongoRaw = cellAt(cols, payAnchor, 0)
+    const paymentStatus = cellAt(cols, payAnchor, 1)
+    const submissionId = cellAt(cols, payAnchor, 2)
+    const email = cellAt(cols, payAnchor, 5)
+
+    const isCriterium = cellBoolTruthy(cellAt(cols, payAnchor, 7))
+    const isITT = cellBoolTruthy(cellAt(cols, payAnchor, 8))
+    const amount = parseFloat(cellAt(cols, payAnchor, 41).replace(/[^0-9.]/g, '')) || 0
+    const paymongoId = paymongoRaw || undefined
+
+    const finalAgeCategory = finalAgeIdx >= 0 ? String(cols[finalAgeIdx] ?? '').trim() : ''
 
     if (!email) continue
-    if (paymentStatus.toUpperCase() !== 'SUCCESS') continue
+    if (!isImportablePaymentStatus(paymentStatus)) continue
 
     let cFirstName = '', cLastName = '', cGender = '', cDateOfBirth = ''
     let cAddress = '', cContactNumber = '', cEmergencyContact = '', cEmergencyContactNumber = ''
@@ -111,56 +203,184 @@ function parseTallyCSV(text: string): ParsedRow[] {
     let ittTeamName = '', ittCategory = '', ittDiscipline = '', ittEventShirt = '', ittBirthYear = ''
 
     if (isCriterium && !isITT) {
-      // Criterium only — cols 9–22
-      cFirstName = c[9] ?? ''; cLastName = c[10] ?? ''; cGender = c[11] ?? ''
-      cDateOfBirth = c[12] ?? ''; cAddress = c[13] ?? ''; cContactNumber = c[14] ?? ''
-      cEmergencyContact = c[15] ?? ''; cEmergencyContactNumber = c[16] ?? ''
-      cTeamName = c[17] ?? ''; cCategory = c[18] ?? ''; cDiscipline = c[19] ?? ''
-      cBirthYear = c[20] ?? ''
-      cEventShirt = c[22] ?? ''
+      cFirstName = cellAt(cols, payAnchor, 9)
+      cLastName = cellAt(cols, payAnchor, 10)
+      cGender = cellAt(cols, payAnchor, 11)
+      cDateOfBirth = cellAt(cols, payAnchor, 12)
+      cAddress = cellAt(cols, payAnchor, 13)
+      cContactNumber = cellAt(cols, payAnchor, 14)
+      cEmergencyContact = cellAt(cols, payAnchor, 15)
+      cEmergencyContactNumber = cellAt(cols, payAnchor, 16)
+      cTeamName = cellAt(cols, payAnchor, 17)
+      cCategory = cellAt(cols, payAnchor, 18)
+      cDiscipline = cellAt(cols, payAnchor, 19)
+      cBirthYear = cellAt(cols, payAnchor, 20)
+      cEventShirt = cellAt(cols, payAnchor, 22)
     } else if (!isCriterium && isITT) {
-      // ITT only — cols 23–36
-      ittFirstName = c[23] ?? ''; ittLastName = c[24] ?? ''; ittGender = c[25] ?? ''
-      ittDateOfBirth = c[26] ?? ''; ittAddress = c[27] ?? ''; ittContactNumber = c[28] ?? ''
-      ittEmergencyContact = c[29] ?? ''; ittEmergencyContactNumber = c[30] ?? ''
-      ittTeamName = c[31] ?? ''; ittCategory = c[32] ?? ''; ittDiscipline = c[33] ?? ''
-      ittBirthYear = c[34] ?? ''
-      ittEventShirt = c[36] ?? ''
+      ittFirstName = cellAt(cols, payAnchor, 23)
+      ittLastName = cellAt(cols, payAnchor, 24)
+      ittGender = cellAt(cols, payAnchor, 25)
+      ittDateOfBirth = cellAt(cols, payAnchor, 26)
+      ittAddress = cellAt(cols, payAnchor, 27)
+      ittContactNumber = cellAt(cols, payAnchor, 28)
+      ittEmergencyContact = cellAt(cols, payAnchor, 29)
+      ittEmergencyContactNumber = cellAt(cols, payAnchor, 30)
+      ittTeamName = cellAt(cols, payAnchor, 31)
+      ittCategory = cellAt(cols, payAnchor, 32)
+      ittDiscipline = cellAt(cols, payAnchor, 33)
+      ittBirthYear = cellAt(cols, payAnchor, 34)
+      ittEventShirt = cellAt(cols, payAnchor, 36)
     } else if (isCriterium && isITT) {
-      // Both — shared rider info in ITT cols (23–31), ITT-specific (32–36), CRI-specific (37–39)
-      const sharedFirst = c[23] ?? ''; const sharedLast = c[24] ?? ''
-      const sharedGender = c[25] ?? ''; const sharedDOB = c[26] ?? ''
-      const sharedAddr = c[27] ?? ''; const sharedContact = c[28] ?? ''
-      const sharedEmergency = c[29] ?? ''; const sharedEmergencyNum = c[30] ?? ''
-      const sharedTeam = c[31] ?? ''
+      const sharedFirst = cellAt(cols, payAnchor, 23)
+      const sharedLast = cellAt(cols, payAnchor, 24)
+      const sharedGender = cellAt(cols, payAnchor, 25)
+      const sharedDOB = cellAt(cols, payAnchor, 26)
+      const sharedAddr = cellAt(cols, payAnchor, 27)
+      const sharedContact = cellAt(cols, payAnchor, 28)
+      const sharedEmergency = cellAt(cols, payAnchor, 29)
+      const sharedEmergencyNum = cellAt(cols, payAnchor, 30)
+      const sharedTeam = cellAt(cols, payAnchor, 31)
 
-      ittFirstName = sharedFirst; ittLastName = sharedLast; ittGender = sharedGender
-      ittDateOfBirth = sharedDOB; ittAddress = sharedAddr; ittContactNumber = sharedContact
-      ittEmergencyContact = sharedEmergency; ittEmergencyContactNumber = sharedEmergencyNum
-      ittTeamName = sharedTeam; ittCategory = c[32] ?? ''; ittDiscipline = c[33] ?? ''
-      ittBirthYear = c[34] ?? ''
-      ittEventShirt = c[36] ?? ''
+      ittFirstName = sharedFirst
+      ittLastName = sharedLast
+      ittGender = sharedGender
+      ittDateOfBirth = sharedDOB
+      ittAddress = sharedAddr
+      ittContactNumber = sharedContact
+      ittEmergencyContact = sharedEmergency
+      ittEmergencyContactNumber = sharedEmergencyNum
+      ittTeamName = sharedTeam
+      ittCategory = cellAt(cols, payAnchor, 32)
+      ittDiscipline = cellAt(cols, payAnchor, 33)
+      ittBirthYear = cellAt(cols, payAnchor, 34)
+      ittEventShirt = cellAt(cols, payAnchor, 36)
 
-      cFirstName = sharedFirst; cLastName = sharedLast; cGender = sharedGender
-      cDateOfBirth = sharedDOB; cAddress = sharedAddr; cContactNumber = sharedContact
-      cEmergencyContact = sharedEmergency; cEmergencyContactNumber = sharedEmergencyNum
-      cTeamName = sharedTeam; cCategory = c[37] ?? ''; cDiscipline = c[38] ?? ''
-      cBirthYear = c[34] ?? ''
-      cEventShirt = c[39] ?? ''
+      cFirstName = sharedFirst
+      cLastName = sharedLast
+      cGender = sharedGender
+      cDateOfBirth = sharedDOB
+      cAddress = sharedAddr
+      cContactNumber = sharedContact
+      cEmergencyContact = sharedEmergency
+      cEmergencyContactNumber = sharedEmergencyNum
+      cTeamName = sharedTeam
+      cCategory = cellAt(cols, payAnchor, 37)
+      cDiscipline = cellAt(cols, payAnchor, 38)
+      cBirthYear = cellAt(cols, payAnchor, 34)
+      cEventShirt = cellAt(cols, payAnchor, 39)
     }
 
     rows.push({
-      paymentStatus, submissionId, email, isCriterium, isITT, paymongoId, amount,
-      cFirstName, cLastName, cGender, cDateOfBirth,
-      cAddress, cContactNumber, cEmergencyContact, cEmergencyContactNumber,
-      cTeamName, cCategory, cDiscipline, cEventShirt, cBirthYear,
-      ittFirstName, ittLastName, ittGender, ittDateOfBirth,
-      ittAddress, ittContactNumber, ittEmergencyContact, ittEmergencyContactNumber,
-      ittTeamName, ittCategory, ittDiscipline, ittEventShirt, ittBirthYear,
+      paymentStatus,
+      submissionId,
+      email,
+      isCriterium,
+      isITT,
+      paymongoId,
+      amount,
+      finalAgeCategory,
+      cFirstName,
+      cLastName,
+      cGender,
+      cDateOfBirth,
+      cAddress,
+      cContactNumber,
+      cEmergencyContact,
+      cEmergencyContactNumber,
+      cTeamName,
+      cCategory,
+      cDiscipline,
+      cEventShirt,
+      cBirthYear,
+      ittFirstName,
+      ittLastName,
+      ittGender,
+      ittDateOfBirth,
+      ittAddress,
+      ittContactNumber,
+      ittEmergencyContact,
+      ittEmergencyContactNumber,
+      ittTeamName,
+      ittCategory,
+      ittDiscipline,
+      ittEventShirt,
+      ittBirthYear,
     })
   }
 
   return rows
+}
+
+function validateImportMatrix(matrix: string[][]): string | null {
+  if (matrix.length < 2) return 'The file has no data rows after the header.'
+  const payIdx = resolvePaymentIdColumnIndex(matrix[0] ?? [])
+  if (payIdx < 0) return 'Missing a PAYMENT ID column in row 1. Export from Google Sheets with headers, or use the same column layout as before.'
+  return null
+}
+
+function isSupportedImportFileName(name: string): boolean {
+  const n = name.toLowerCase()
+  return n.endsWith('.csv') || n.endsWith('.tsv') || n.endsWith('.txt') || n.endsWith('.xlsx') || n.endsWith('.xls')
+}
+
+function merchantReferenceForRow(row: ParsedRow, eventType: 'criterium' | 'itt') {
+  const slug = eventType === 'criterium' ? 'criterium' : 'individual-time-trial'
+  return `tally-import-${row.submissionId}-${slug}`
+}
+
+function disciplineHintFromCombinedCategory(finalLabel: string): string {
+  const u = String(finalLabel ?? '').toUpperCase()
+  if (!u.trim()) return ''
+  if (u.includes('MOUNTAIN') || u.includes(' MTB')) return 'Mountain Bike'
+  if (u.includes('ROAD')) return 'Road Bike'
+  return ''
+}
+
+function splitFinalAgeCategory(raw: string): { categoryLabel: string; disciplineHint: string } {
+  const v = String(raw ?? '').trim()
+  if (!v) return { categoryLabel: '', disciplineHint: '' }
+
+  const upper = v.toUpperCase()
+  const hasRoad = upper.includes('ROAD BIKE') || /\bROAD\b/i.test(v)
+  const hasMtb = upper.includes('MOUNTAIN BIKE') || /\bMTB\b/i.test(v) || upper.includes('MOUNTAIN')
+  const disciplineHint = hasMtb ? 'Mountain Bike' : hasRoad ? 'Road Bike' : ''
+
+  // Strip common discipline suffixes so matching compares only to `race_categories.category_name`.
+  let label = v
+  label = label.replace(/\b(MOUNTAIN\s*BIKE|ROAD\s*BIKE)\b/gi, '')
+  label = label.replace(/\bMTB\b/gi, '')
+  label = label.replace(/\s+/g, ' ').trim()
+  return { categoryLabel: label, disciplineHint }
+}
+
+function isOpenFemaleLabel(raw: string): boolean {
+  const s = normalizeCategoryLabelForMatch(String(raw ?? ''))
+  return s.includes('open female')
+}
+
+async function resolveRaceCategoryIdWithOpenFemaleFallback(args: {
+  eventId: string
+  categoryLabel: string
+  riderDiscipline: string
+  riderGender: string
+}): Promise<{ id: string | null; note?: string }> {
+  const { eventId, categoryLabel, riderDiscipline, riderGender } = args
+
+  const direct = await resolveRaceCategoryIdForImport(eventId, categoryLabel, riderDiscipline, riderGender)
+  if (direct) return { id: direct }
+
+  // If "Open Female" is present and discipline is missing, it can be ambiguous (Road vs MTB).
+  // Import anyway using a deterministic fallback (can be corrected later via Edit).
+  if (!riderDiscipline && isOpenFemaleLabel(categoryLabel)) {
+    const road = await resolveRaceCategoryIdForImport(eventId, categoryLabel, 'Road Bike', riderGender)
+    const mtb = await resolveRaceCategoryIdForImport(eventId, categoryLabel, 'Mountain Bike', riderGender)
+
+    if (road && !mtb) return { id: road, note: 'Auto-picked Road Bike for Open Female (no MTB match).' }
+    if (!road && mtb) return { id: mtb, note: 'Auto-picked Mountain Bike for Open Female (no Road match).' }
+    if (road && mtb) return { id: road, note: 'Auto-picked Road Bike for Open Female (ambiguous vs MTB). Edit if needed.' }
+  }
+
+  return { id: null }
 }
 
 function ageCategoryFromAge(age: number): string {
@@ -319,9 +539,16 @@ async function insertRegistration(row: ParsedRow, eventType: 'criterium' | 'itt'
   const teamName = isCriterium ? row.cTeamName : row.ittTeamName
   const categoryInput = isCriterium ? row.cCategory : row.ittCategory
   const birthYearInput = isCriterium ? row.cBirthYear : row.ittBirthYear
-  // Always prioritize birth-year based category to keep imports consistent.
-  const category = ageCategoryFromBirthYearOrDob(birthYearInput, dateOfBirth) || categoryInput
-  const discipline = isCriterium ? row.cDiscipline : row.ittDiscipline
+  const finalCatRaw = sanitizeText(row.finalAgeCategory)
+  const finalCatParts = splitFinalAgeCategory(finalCatRaw)
+  const finalCat = finalCatParts.categoryLabel
+  const derivedAgeCat = ageCategoryFromBirthYearOrDob(birthYearInput, dateOfBirth)
+  const category = finalCat || derivedAgeCat || categoryInput
+  const sheetDiscipline = sanitizeText(isCriterium ? row.cDiscipline : row.ittDiscipline)
+  const discipline =
+    sheetDiscipline
+    || finalCatParts.disciplineHint
+    || disciplineHintFromCombinedCategory(finalCatRaw)
   const jerseySize = isCriterium ? row.cEventShirt : row.ittEventShirt
 
   const eventTypeSlug = isCriterium ? 'criterium' : 'individual-time-trial'
@@ -329,17 +556,13 @@ async function insertRegistration(row: ParsedRow, eventType: 'criterium' | 'itt'
   const name = `${firstName} ${lastName}`.trim() || row.email
 
   try {
-    const raceCategoryId = await resolveRaceCategoryIdForImport(
-      EVENT_ID,
-      category || categoryInput || '',
-      discipline || '',
-      gender || '',
-    )
-    if (!raceCategoryId) {
-      throw new Error(
-        `No race_categories row matched "${category || categoryInput || '(blank)'}" for this event (check spelling vs Admin → Events, and discipline "${discipline || '—'}").`,
-      )
-    }
+    const { id: raceCategoryId, note: raceCategoryNote } = await resolveRaceCategoryIdWithOpenFemaleFallback({
+      eventId: EVENT_ID,
+      categoryLabel: finalCat || category || categoryInput || '',
+      riderDiscipline: discipline || '',
+      riderGender: gender || '',
+    })
+    const missingCategory = !raceCategoryId
 
     const fee = Number(row.amount) > 0 ? Number(row.amount) : null
 
@@ -347,7 +570,7 @@ async function insertRegistration(row: ParsedRow, eventType: 'criterium' | 'itt'
       .from('registration_forms')
       .insert({
         event_id: EVENT_ID,
-        race_category_id: raceCategoryId,
+        race_category_id: missingCategory ? null : raceCategoryId,
         registrant_email: row.email,
         entry_event_type_slug: eventTypeSlug,
         entry_event_type_label: eventTypeLabel,
@@ -392,7 +615,20 @@ async function insertRegistration(row: ParsedRow, eventType: 'criterium' | 'itt'
 
     if (orderError) throw orderError
 
-    return { email: row.email, name, type: eventTypeLabel, status: 'success', message: 'Imported successfully', registrationId }
+    const categoryNote = missingCategory
+      ? 'Imported, but category was not matched. Use Edit in Registrations to set Category before generating bib.'
+      : ''
+
+    return {
+      email: row.email,
+      name,
+      type: eventTypeLabel,
+      status: 'success',
+      message: [raceCategoryNote ? `Imported successfully. ${raceCategoryNote}` : 'Imported successfully', categoryNote]
+        .filter(Boolean)
+        .join(' '),
+      registrationId,
+    }
   } catch (e) {
     return { email: row.email, name, type: eventTypeLabel, status: 'error', message: (e as Error).message || 'Unknown error' }
   }
@@ -413,14 +649,24 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
   const [results, setResults] = useState<ImportResult[]>([])
   const [progress, setProgress] = useState(0)
   const [showErrors, setShowErrors] = useState(false)
+  const [checkingExisting, setCheckingExisting] = useState(false)
 
   const totalRegistrations = parsed.reduce((acc, row) => {
-    return acc + (row.isCriterium ? 1 : 0) + (row.isITT ? 1 : 0)
+    const addC = row.isCriterium && !row.existsCriterium ? 1 : 0
+    const addI = row.isITT && !row.existsITT ? 1 : 0
+    return acc + addC + addI
   }, 0)
 
   const withPaymongoId = parsed.filter((r) => r.paymongoId).length
+  const previewRows = parsed.filter((row) => (row.isCriterium && !row.existsCriterium) || (row.isITT && !row.existsITT))
+  const previewWithPaymongoId = previewRows.filter((r) => r.paymongoId).length
+  const alreadyImportedCount = parsed.reduce((acc, row) => {
+    const addC = row.isCriterium && row.existsCriterium ? 1 : 0
+    const addI = row.isITT && row.existsITT ? 1 : 0
+    return acc + addC + addI
+  }, 0)
 
-  function readFile(f: File): Promise<string> {
+  function readFileAsText(f: File): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = (e) => resolve(e.target?.result as string)
@@ -429,26 +675,84 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
     })
   }
 
+  async function loadMatrixFromFile(f: File): Promise<string[][]> {
+    const lower = f.name.toLowerCase()
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      return matrixFromXlsxFile(f)
+    }
+    const text = await readFileAsText(f)
+    return splitMatrixFromText(text)
+  }
+
   async function handleFile(f: File) {
     setFile(f)
     setParseError('')
     try {
-      const text = await readFile(f)
-      const rows = parseTallyCSV(text)
-      if (rows.length === 0) {
-        setParseError('No SUCCESS rows found. Make sure this is the correct file.')
+      const matrix = await loadMatrixFromFile(f)
+      const layoutErr = validateImportMatrix(matrix)
+      if (layoutErr) {
+        setParseError(layoutErr)
+        setParsed([])
         return
       }
-      setParsed(rows)
+      const rows = parseTallyRows(matrix)
+      if (rows.length === 0) {
+        setParseError(
+          'No importable rows. Need SUCCESS or PAID payment status; a valid email; and Criterium/ITT flags.',
+        )
+        setParsed([])
+        return
+      }
+      // Start with a clean state; then mark existing imports to avoid duplicates.
+      setParsed(rows.map((r) => ({ ...r, existsCriterium: false, existsITT: false })))
+      setCheckingExisting(true)
+      void (async () => {
+        try {
+          const refs: string[] = []
+          for (const r of rows) {
+            if (r.isCriterium) refs.push(merchantReferenceForRow(r, 'criterium'))
+            if (r.isITT) refs.push(merchantReferenceForRow(r, 'itt'))
+          }
+          const unique = Array.from(new Set(refs)).filter(Boolean)
+          if (unique.length === 0) return
+
+          const existing = new Set<string>()
+          const CHUNK = 250
+          for (let i = 0; i < unique.length; i += CHUNK) {
+            const chunk = unique.slice(i, i + CHUNK)
+            const { data, error } = await supabaseAdmin
+              .from('payment_orders')
+              .select('merchant_reference')
+              .in('merchant_reference', chunk)
+            if (error) throw error
+            for (const item of (data ?? []) as Array<{ merchant_reference: string | null }>) {
+              const mr = String(item.merchant_reference ?? '').trim()
+              if (mr) existing.add(mr)
+            }
+          }
+
+          setParsed((prev) =>
+            prev.map((r) => {
+              const existsC = r.isCriterium ? existing.has(merchantReferenceForRow(r, 'criterium')) : false
+              const existsI = r.isITT ? existing.has(merchantReferenceForRow(r, 'itt')) : false
+              return { ...r, existsCriterium: existsC, existsITT: existsI }
+            }),
+          )
+        } catch {
+          // Non-blocking: if policies prevent reading payment_orders, we still allow import.
+        } finally {
+          setCheckingExisting(false)
+        }
+      })()
     } catch {
-      setParseError('Failed to read CSV.')
+      setParseError('Failed to read this file. For .xlsx use the first sheet; for text use UTF-8 CSV or TSV.')
     }
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     const f = e.dataTransfer.files[0]
-    if (f?.name.endsWith('.csv')) void handleFile(f)
+    if (f && isSupportedImportFileName(f.name)) void handleFile(f)
   }
 
   function resetUpload() {
@@ -463,28 +767,52 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
     setProgress(0)
     const allResults: ImportResult[] = []
     let done = 0
+    const total = Math.max(1, totalRegistrations)
+    const bumpProgress = () => {
+      done += 1
+      setProgress(Math.min(100, Math.round((done / total) * 100)))
+    }
 
     async function importOnly(row: ParsedRow, eventType: 'criterium' | 'itt') {
+      const already = eventType === 'criterium' ? Boolean(row.existsCriterium) : Boolean(row.existsITT)
+      if (already) {
+        const label = eventType === 'criterium' ? 'Criterium' : 'Individual Time Trial'
+        allResults.push({
+          email: row.email,
+          name: `${(eventType === 'criterium' ? row.cFirstName : row.ittFirstName)} ${(eventType === 'criterium' ? row.cLastName : row.ittLastName)}`.trim() || row.email,
+          type: label,
+          status: 'skipped',
+          message: 'Skipped (already imported).',
+        })
+        return
+      }
       const inserted = await insertRegistration(row, eventType)
       if (inserted.status === 'success') {
-        inserted.message = 'Imported successfully. Use "Auto Generate Bib" after reviewing rider details.'
+        inserted.message = 'Imported successfully. Fill in rider details if needed, then use Generate bib on each row in Registrations.'
       }
       allResults.push(inserted)
     }
 
+    if (totalRegistrations <= 0) {
+      setProgress(100)
+      setResults(allResults)
+      setStep('done')
+      return
+    }
+
     for (const row of parsed) {
-      if (row.isCriterium) {
+      // Only count ops that match `totalRegistrations` (already-imported branches were inflating % past 100).
+      if (row.isCriterium && !row.existsCriterium) {
         await importOnly(row, 'criterium')
-        done++
-        setProgress(Math.round((done / totalRegistrations) * 100))
+        bumpProgress()
       }
-      if (row.isITT) {
+      if (row.isITT && !row.existsITT) {
         await importOnly(row, 'itt')
-        done++
-        setProgress(Math.round((done / totalRegistrations) * 100))
+        bumpProgress()
       }
     }
 
+    setProgress(100)
     setResults(allResults)
     setStep('done')
   }
@@ -506,7 +834,8 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Import Participants</h3>
               <p className="text-xs text-slate-500">
-                Upload your Tally CSV — must include <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> and <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code> columns
+                CSV, TSV, or Excel — header row with <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> and{' '}
+                <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code>; optional <code className="rounded bg-slate-100 px-1 text-[11px]">FINAL AGE CATEGORY</code>
               </p>
             </div>
           </div>
@@ -519,7 +848,7 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
         {step === 'upload' && (
           <div className="space-y-4 p-5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Only <span className="text-emerald-600">SUCCESS</span> rows will be imported. Make sure your sheet has <span className="font-mono text-slate-600">PAYMENT ID</span> and <span className="font-mono text-slate-600">Price</span> columns.
+              Rows with <span className="text-emerald-600">SUCCESS</span> or <span className="text-emerald-600">PAID</span> status import. We'll skip rows already imported to prevent duplicates.
             </p>
 
             <div
@@ -537,13 +866,15 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
                   <>
                     <p className="truncate text-xs font-semibold text-emerald-700">{file.name}</p>
                     <p className="text-[11px] text-emerald-600">
-                      {parsed.length} SUCCESS rows · {withPaymongoId} with Payment ID
+                      {parsed.length} row{parsed.length !== 1 ? 's' : ''} found
+                      {alreadyImportedCount > 0 ? ` · ${alreadyImportedCount} already imported` : ''}
+                      {checkingExisting ? ' · checking…' : ''}
                     </p>
                   </>
                 ) : (
                   <>
-                    <p className="text-xs font-medium text-slate-700">Drop CSV here or click to browse</p>
-                    <p className="text-[11px] text-slate-400">Exported from Google Sheets / Tally</p>
+                    <p className="text-xs font-medium text-slate-700">Drop file or click to browse</p>
+                    <p className="text-[11px] text-slate-400">.csv, .tsv, .xlsx — Google Sheets / Tally export</p>
                   </>
                 )}
               </div>
@@ -557,8 +888,18 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
                 </button>
               )}
             </div>
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f) }} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.tsv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (!f) return
+                if (isSupportedImportFileName(f.name)) void handleFile(f)
+                else setParseError('Use a .csv, .tsv, or .xlsx file.')
+              }}
+            />
 
             {/* Warning: rows missing Payment ID */}
             {parsed.length > 0 && withPaymongoId < parsed.length && (
@@ -603,16 +944,16 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
             {/* Summary */}
             <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
               <div className="px-5 py-3 text-center">
-                <p className="text-2xl font-semibold text-slate-900">{parsed.length}</p>
-                <p className="text-[11px] text-slate-500">Paid submissions</p>
+                <p className="text-2xl font-semibold text-slate-900">{previewRows.length}</p>
+                <p className="text-[11px] text-slate-500">Rows to import</p>
               </div>
               <div className="px-5 py-3 text-center">
                 <p className="text-2xl font-semibold text-slate-900">{totalRegistrations}</p>
-                <p className="text-[11px] text-slate-500">Registrations to create</p>
+                <p className="text-[11px] text-slate-500">New registrations</p>
               </div>
               <div className="px-5 py-3 text-center">
-                <p className="text-2xl font-semibold text-emerald-600">{withPaymongoId}</p>
-                <p className="text-[11px] text-slate-500">With Payment ID</p>
+                <p className="text-2xl font-semibold text-emerald-600">{previewWithPaymongoId}</p>
+                <p className="text-[11px] text-slate-500">With payment ID</p>
               </div>
             </div>
 
@@ -632,18 +973,26 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
-                    {parsed.map((row, i) => {
+                    {previewRows.map((row, i) => {
                       const name = (row.isCriterium
                         ? `${row.cFirstName} ${row.cLastName}`
                         : `${row.ittFirstName} ${row.ittLastName}`).trim()
-                      const events = [row.isCriterium ? 'CRI' : null, row.isITT ? 'ITT' : null].filter(Boolean).join(' + ')
-                      const cat = row.isCriterium ? row.cCategory : row.ittCategory
+                      const events = [
+                        row.isCriterium && !row.existsCriterium ? 'CRI' : null,
+                        row.isITT && !row.existsITT ? 'ITT' : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' + ')
+                      const sheetCat = row.isCriterium ? row.cCategory : row.ittCategory
+                      const cat = row.finalAgeCategory?.trim() || sheetCat?.trim() || ''
                       return (
                         <tr key={i} className="text-slate-700 hover:bg-slate-50/60">
                           <td className="py-2 pl-5 pr-3 font-semibold text-slate-800">{name || '—'}</td>
                           <td className="py-2 pr-3 text-slate-500">{row.email}</td>
                           <td className="py-2 pr-3">
-                            <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{events}</span>
+                            <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">
+                              {events || '—'}
+                            </span>
                           </td>
                           <td className="py-2 pr-3 text-slate-500">{cat || '—'}</td>
                           <td className="py-2 pr-3 font-medium text-slate-700">
@@ -663,12 +1012,18 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
 
               {/* Mobile cards */}
               <div className="divide-y divide-slate-100 sm:hidden">
-                {parsed.map((row, i) => {
+                {previewRows.map((row, i) => {
                   const name = (row.isCriterium
                     ? `${row.cFirstName} ${row.cLastName}`
                     : `${row.ittFirstName} ${row.ittLastName}`).trim()
-                  const events = [row.isCriterium ? 'CRI' : null, row.isITT ? 'ITT' : null].filter(Boolean).join(' + ')
-                  const cat = row.isCriterium ? row.cCategory : row.ittCategory
+                  const events = [
+                    row.isCriterium && !row.existsCriterium ? 'CRI' : null,
+                    row.isITT && !row.existsITT ? 'ITT' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' + ')
+                  const sheetCat = row.isCriterium ? row.cCategory : row.ittCategory
+                  const cat = row.finalAgeCategory?.trim() || sheetCat?.trim() || ''
                   return (
                     <div key={i} className="px-4 py-3 text-xs">
                       <div className="flex items-start justify-between gap-2">
@@ -676,7 +1031,7 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
                           <p className="truncate font-semibold text-slate-800">{name || '—'}</p>
                           <p className="truncate text-slate-500">{row.email}</p>
                         </div>
-                        <span className="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{events}</span>
+                        <span className="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{events || '—'}</span>
                       </div>
                       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
                         <span><span className="font-medium text-slate-600">Category:</span> {cat || '—'}</span>
