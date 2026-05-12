@@ -52,7 +52,7 @@ function StatCardSkeleton() {
   )
 }
 
-function ChartSkeleton({ title }: { title: string }) {
+function ChartSkeleton() {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <SkeletonBlock className="mb-4 h-4 w-36" />
@@ -612,7 +612,7 @@ export function AdminDashboard() {
       {/* ── Charts ─────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} title="" />)
+          Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} />)
         ) : (
           <>
             <ChartPlaceholder title="Monthly Registrations">
