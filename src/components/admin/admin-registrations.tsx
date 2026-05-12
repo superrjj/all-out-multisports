@@ -28,7 +28,6 @@ function pill(status: string) {
   return 'bg-slate-100 text-slate-700'
 }
 
-const PENDING_DELETE_WINDOW_MS = 10 * 60 * 1000
 
 /** Matches server rules for manual delete / stale purge (unpaid checkout only). */
 function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
@@ -41,10 +40,7 @@ function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
 }
 
 function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
-  if (!isUnpaidDraftRegistrationRow(r)) return false
-  const t = r.created_at ? new Date(r.created_at).getTime() : 0
-  if (!t) return false
-  return Date.now() - t <= PENDING_DELETE_WINDOW_MS
+  return isUnpaidDraftRegistrationRow(r)
 }
 
 /** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
@@ -1269,7 +1265,7 @@ export function AdminRegistrations() {
               <h3 id="delete-reg-title" className="text-sm font-semibold text-slate-900">
                 Delete pending registration?
               </h3>
-              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 10 minutes can be removed.</p>
+              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 2 hours can be removed.</p>
             </div>
             <div className="space-y-2 px-4 py-3 text-sm text-slate-800">
               <p>
