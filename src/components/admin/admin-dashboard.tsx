@@ -31,6 +31,87 @@ import { supabase } from '../../lib/supabase'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
 
+// ─── Skeleton Primitives ──────────────────────────────────────────────────────
+
+function SkeletonBlock({ className }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-slate-200 ${className ?? ''}`} />
+}
+
+function StatCardSkeleton() {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 space-y-2">
+          <SkeletonBlock className="h-3 w-24" />
+          <SkeletonBlock className="h-7 w-20" />
+          <SkeletonBlock className="h-3 w-32" />
+        </div>
+        <SkeletonBlock className="h-11 w-11 rounded-xl" />
+      </div>
+    </div>
+  )
+}
+
+function ChartSkeleton({ title }: { title: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <SkeletonBlock className="mb-4 h-4 w-36" />
+      <SkeletonBlock className="h-48 w-full rounded-lg" />
+    </div>
+  )
+}
+
+function TableRowSkeleton() {
+  return (
+    <tr>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <SkeletonBlock className="h-8 w-8 rounded-full" />
+          <SkeletonBlock className="h-3 w-24" />
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <SkeletonBlock className="h-3 w-20" />
+      </td>
+      <td className="px-4 py-3">
+        <SkeletonBlock className="h-5 w-14 rounded-full" />
+      </td>
+      <td className="px-4 py-3">
+        <SkeletonBlock className="h-3 w-16" />
+      </td>
+    </tr>
+  )
+}
+
+function EventItemSkeleton() {
+  return (
+    <li className="flex gap-3 rounded-lg p-2">
+      <SkeletonBlock className="h-12 w-12 shrink-0 rounded-lg" />
+      <div className="flex-1 space-y-2">
+        <SkeletonBlock className="h-3 w-32" />
+        <SkeletonBlock className="h-3 w-20" />
+        <SkeletonBlock className="h-3 w-24" />
+      </div>
+      <SkeletonBlock className="h-5 w-14 rounded-full" />
+    </li>
+  )
+}
+
+function AnnouncementItemSkeleton() {
+  return (
+    <li className="flex gap-3 rounded-lg p-2">
+      <SkeletonBlock className="h-12 w-12 shrink-0 rounded-lg" />
+      <div className="flex-1 space-y-2">
+        <SkeletonBlock className="h-3 w-36" />
+        <SkeletonBlock className="h-3 w-full" />
+        <SkeletonBlock className="h-3 w-16" />
+      </div>
+    </li>
+  )
+}
+
+// ─── Stat Card ────────────────────────────────────────────────────────────────
+
 function StatCard({
   label,
   value,
@@ -482,65 +563,82 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Stat Cards ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-        <StatCard
-          label="Total Cyclists"
-          value={stats.cyclists.toLocaleString()}
-          trend={`${stats.cyclists.toLocaleString()} unique riders`}
-          icon={Users}
-          iconBg="bg-blue-600"
-        />
-        <StatCard
-          label="Total Registrations"
-          value={stats.totalRegs.toLocaleString()}
-          trend="Latest registrations snapshot"
-          icon={ClipboardList}
-          iconBg="bg-emerald-600"
-        />
-        <StatCard
-          label="Active Events"
-          value={String(stats.activeEvents)}
-          trend="Published events"
-          icon={CalendarDays}
-          iconBg="bg-violet-600"
-        />
-    
-        <StatCard
-          label="Paid Registrations"
-          value={stats.paid.toLocaleString()}
-          trend="Successful payment status"
-          icon={CreditCard}
-          iconBg="bg-teal-600"
-        />
-        <StatCard
-          label="Revenue Summary"
-          value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
-          trend="From paid payment orders"
-          icon={Bike}
-          iconBg="bg-lime-600"
-        />
+        {loading ? (
+          Array.from({ length: 5 }).map((_, i) => <StatCardSkeleton key={i} />)
+        ) : (
+          <>
+            <StatCard
+              label="Total Cyclists"
+              value={stats.cyclists.toLocaleString()}
+              trend={`${stats.cyclists.toLocaleString()} unique riders`}
+              icon={Users}
+              iconBg="bg-blue-600"
+            />
+            <StatCard
+              label="Total Registrations"
+              value={stats.totalRegs.toLocaleString()}
+              trend="Latest registrations snapshot"
+              icon={ClipboardList}
+              iconBg="bg-emerald-600"
+            />
+            <StatCard
+              label="Active Events"
+              value={String(stats.activeEvents)}
+              trend="Published events"
+              icon={CalendarDays}
+              iconBg="bg-violet-600"
+            />
+            <StatCard
+              label="Paid Registrations"
+              value={stats.paid.toLocaleString()}
+              trend="Successful payment status"
+              icon={CreditCard}
+              iconBg="bg-teal-600"
+            />
+            <StatCard
+              label="Revenue Summary"
+              value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
+              trend="From paid payment orders"
+              icon={Bike}
+              iconBg="bg-lime-600"
+            />
+          </>
+        )}
       </div>
 
+      {/* ── Charts ─────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        <ChartPlaceholder title="Monthly Registrations">
-          <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
-        </ChartPlaceholder>
-        <ChartPlaceholder title="Revenue Analytics">
-          <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
-        </ChartPlaceholder>
-        <ChartPlaceholder title="Event Participation Trends">
-          <EventParticipationBarChartJs
-            labels={eventParticipationSeries.labels}
-            data={eventParticipationSeries.data}
-            usePercentScale={eventParticipationSeries.usePercentScale}
-          />
-        </ChartPlaceholder>
-        <ChartPlaceholder title="Category Participation">
-          <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
-        </ChartPlaceholder>
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} title="" />)
+        ) : (
+          <>
+            <ChartPlaceholder title="Monthly Registrations">
+              <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
+            </ChartPlaceholder>
+            <ChartPlaceholder title="Revenue Analytics">
+              <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
+            </ChartPlaceholder>
+            <ChartPlaceholder title="Event Participation Trends">
+              <EventParticipationBarChartJs
+                labels={eventParticipationSeries.labels}
+                data={eventParticipationSeries.data}
+                usePercentScale={eventParticipationSeries.usePercentScale}
+              />
+            </ChartPlaceholder>
+            <ChartPlaceholder title="Category Participation">
+              <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
+            </ChartPlaceholder>
+          </>
+        )}
       </div>
 
+      {/* ── Bottom Row ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+
+        {/* Recent Registrations */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm xl:col-span-1">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-900">Recent Registrations</h3>
@@ -560,20 +658,20 @@ export function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                      Loading…
-                    </td>
-                  </tr>
-                ) : null}
-                {error ? (
+                  Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)
+                ) : error ? (
                   <tr>
                     <td colSpan={4} className="px-4 py-3 text-rose-600">
                       {error}
                     </td>
                   </tr>
-                ) : null}
-                {!loading &&
+                ) : recent.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                      No registrations yet.
+                    </td>
+                  </tr>
+                ) : (
                   recent.map((r) => (
                     <tr key={r.id} className="text-slate-800">
                       <td className="px-4 py-3">
@@ -600,19 +698,14 @@ export function AdminDashboard() {
                         {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
                       </td>
                     </tr>
-                  ))}
-                {!loading && !error && recent.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                      No registrations yet.
-                    </td>
-                  </tr>
-                ) : null}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
+        {/* Upcoming Events */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-900">Upcoming Events</h3>
@@ -621,42 +714,47 @@ export function AdminDashboard() {
             </Link>
           </div>
           <ul className="divide-y divide-slate-100 p-2">
-            {events.slice(0, 5).map((ev) => {
-              const registered = registrationCountByEvent.get(ev.id) ?? 0
-              const cap = Number(ev.rider_limit ?? 0)
-              const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
-              return (
-              <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                <img
-                  src={posterSrc}
-                  alt=""
-                  className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
-                  onError={(e) => {
-                    e.currentTarget.src = '/bg2.png'
-                  }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
-                  <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
-                  </p>
-                </div>
-                <span
-                  className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                    String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                  }`}
-                >
-                  {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
-                </span>
-              </li>
-            )})}
-            {!loading && events.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <EventItemSkeleton key={i} />)
+            ) : events.length === 0 ? (
               <li className="px-3 py-4 text-xs text-slate-500">No events found.</li>
-            ) : null}
+            ) : (
+              events.slice(0, 5).map((ev) => {
+                const registered = registrationCountByEvent.get(ev.id) ?? 0
+                const cap = Number(ev.rider_limit ?? 0)
+                const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
+                return (
+                  <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+                    <img
+                      src={posterSrc}
+                      alt=""
+                      className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
+                      onError={(e) => {
+                        e.currentTarget.src = '/bg2.png'
+                      }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
+                      <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
+                      <p className="mt-1 text-xs text-slate-600">
+                        Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
+                      </p>
+                    </div>
+                    <span
+                      className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
+                    </span>
+                  </li>
+                )
+              })
+            )}
           </ul>
         </div>
 
+        {/* Latest Announcements */}
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h3 className="text-sm font-semibold text-slate-900">Latest Announcements</h3>
@@ -665,25 +763,29 @@ export function AdminDashboard() {
             </Link>
           </div>
           <ul className="divide-y divide-slate-100 p-2">
-            {announcements.map((a) => (
-              <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
-                  <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
-                  </p>
-                </div>
-              </li>
-            ))}
-            {!loading && announcements.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => <AnnouncementItemSkeleton key={i} />)
+            ) : announcements.length === 0 ? (
               <li className="px-3 py-4 text-xs text-slate-500">No announcements found.</li>
-            ) : null}
+            ) : (
+              announcements.map((a) => (
+                <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+                  <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
+                    <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
+                    </p>
+                  </div>
+                </li>
+              ))
+            )}
           </ul>
         </div>
       </div>
 
+      {/* ── Quick Actions ───────────────────────────────────────────────────── */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <h3 className="text-sm font-semibold text-slate-900">Quick Actions</h3>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
