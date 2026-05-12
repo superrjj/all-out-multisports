@@ -879,7 +879,7 @@ export function AdminRegistrations() {
             onPointerCancel={endTableDragScroll}
             onLostPointerCapture={onTableLostPointerCapture}
           >
-          <table className="w-max min-w-[1180px] max-w-none table-auto border-collapse text-left text-sm">
+          <table className="w-max min-w-[100%] max-w-none table-auto border-collapse text-left text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500 shadow-[0_1px_0_0_rgb(226_232_240)]">
               <tr>
                 <th className="min-w-[152px] max-w-[280px] whitespace-normal py-3 pl-4 pr-3 font-semibold">Rider Name</th>
@@ -888,9 +888,9 @@ export function AdminRegistrations() {
                 <th className="min-w-[96px] py-3 pr-3 font-semibold">Discipline</th>
                 <th className="min-w-[88px] max-w-[200px] whitespace-normal py-3 pr-3 font-semibold">Team</th>
                 <th className="min-w-[112px] py-3 pr-3 font-semibold">Payment Status</th>
-                <th className="min-w-[132px] py-3 pr-3 font-semibold">Reference No.</th>
-                <th className="min-w-[72px] py-3 pr-3 font-semibold">Bib Number</th>
-                <th className="min-w-[148px] whitespace-nowrap py-3 pr-4 text-right font-semibold">Admin Actions</th>
+                <th className="min-w-[240px] py-3 pr-3 font-semibold">Reference No.</th>
+                <th className="min-w-[90px] py-3 pr-3 font-semibold">Bib Number</th>
+                <th className="min-w-[148px] whitespace-nowrap py-3 pr-4 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

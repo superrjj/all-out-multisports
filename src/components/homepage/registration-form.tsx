@@ -603,6 +603,24 @@ export function RegistrationForm() {
     }
   }
 
+  function formatPhilippinePhone(raw: string): string {
+  // Strip everything except digits and leading +
+  let digits = raw.replace(/[^\d]/g, '')
+  // Normalize: if starts with 63, strip it; if starts with 0, strip it
+  if (digits.startsWith('63')) digits = digits.slice(2)
+  if (digits.startsWith('0')) digits = digits.slice(1)
+  // Keep only up to 10 digits (9XXXXXXXXX)
+  digits = digits.slice(0, 10)
+  // Format as 9XX XXX XXXX
+  const p1 = digits.slice(0, 3)   // 9XX
+  const p2 = digits.slice(3, 6)   // XXX
+  const p3 = digits.slice(6, 10)  // XXXX
+  let formatted = p1
+  if (p2) formatted += ' ' + p2
+  if (p3) formatted += ' ' + p3
+  return formatted ? '+63 ' + formatted : ''
+}
+
   // ── Render ─────────────────────────────────────────────────────────────────
   if (showFormSkeleton) {
     return (
@@ -827,7 +845,7 @@ export function RegistrationForm() {
             value={form.contactNumber}
             placeholder="+63 9XX XXX XXXX"
             error={fieldErrors.contactNumber}
-            onChange={(v) => updateFormField('contactNumber', v)}
+            onChange={(v) => updateFormField('contactNumber', formatPhilippinePhone(v))}
           />
           <Field
             label={<>Emergency Contact <span className="text-rose-500">*</span></>}
@@ -837,12 +855,12 @@ export function RegistrationForm() {
             onChange={(v) => updateFormField('emergencyContactName', v)}
           />
           <Field
-            label={<>Emergency Contact Number <span className="text-rose-500">*</span></>}
-            value={form.emergencyContactNumber}
-            placeholder="+63 9XX XXX XXXX"
-            error={fieldErrors.emergencyContactNumber}
-            onChange={(v) => updateFormField('emergencyContactNumber', v)}
-          />
+          label={<>Emergency Contact Number <span className="text-rose-500">*</span></>}
+          value={form.emergencyContactNumber}
+          placeholder="+63 9XX XXX XXXX"
+          error={fieldErrors.emergencyContactNumber}
+          onChange={(v) => updateFormField('emergencyContactNumber', formatPhilippinePhone(v))}
+        />
           <Field
             label="Team Name"
             value={form.teamName}
