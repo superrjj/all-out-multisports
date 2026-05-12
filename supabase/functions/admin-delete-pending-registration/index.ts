@@ -6,7 +6,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-const STALE_MS = 10 * 60 * 1000
+const STALE_MS = 2 * 60 * 60 * 1000
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
     return jsonResponse(
       {
         error:
-          'This pending entry is older than 10 minutes. It will be removed automatically on the next admin refresh, or run purge again.',
+          'This pending entry is older than 2 hours. It will be removed automatically on the next admin refresh, or run purge again.',
       },
       400,
     )
