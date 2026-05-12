@@ -994,7 +994,7 @@ export function AdminRegistrations() {
                               rowActionLoading[r.id] === 'autobib'
                                 ? 'Generating bib…'
                                 : referenceNo && !String(r.bib_number ?? '').trim()
-                                  ? 'Generate bib · Assign category/discipline details first when needed.'
+                                  ? 'Generate bib'
                                   : 'Generate bib number'
                             }
                             onClick={() => void handleGenerateBibForRow(r)}
