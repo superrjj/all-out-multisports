@@ -31,10 +31,21 @@ import { supabase } from '../../lib/supabase'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
 
-// ─── Skeleton Primitives ──────────────────────────────────────────────────────
+// ─── Shimmer Primitives ───────────────────────────────────────────────────────
 
 function SkeletonBlock({ className }: { className?: string }) {
-  return <div className={`animate-pulse rounded-md bg-slate-200 ${className ?? ''}`} />
+  return (
+    <div className={`relative overflow-hidden rounded-md bg-slate-200 ${className ?? ''}`}>
+      <div
+        className="absolute inset-0 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+        style={{
+          animation: 'shimmer 2s ease-in-out infinite',
+          transform: 'translateX(-100%)',
+          backgroundSize: '200% 100%',
+        }}
+      />
+    </div>
+  )
 }
 
 function StatCardSkeleton() {
@@ -498,7 +509,7 @@ export function AdminDashboard() {
       if (!order.created_at) continue
       const d = new Date(order.created_at)
       if (Number.isNaN(d.getTime())) continue
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '00')}`
       if (byMonth.has(key)) byMonth.set(key, (byMonth.get(key) ?? 0) + Number(order.amount ?? 0))
     }
     return { labels, data: keys.map((k) => byMonth.get(k) ?? 0) }
@@ -562,245 +573,255 @@ export function AdminDashboard() {
   const recent = rows.slice(0, 5)
 
   return (
-    <div className="space-y-6">
+    <>
+      {/* Shimmer keyframe injected once via a style tag */}
+      <style>{`
+        @keyframes shimmer {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+      `}</style>
 
-      {/* ── Stat Cards ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-        {loading ? (
-          Array.from({ length: 5 }).map((_, i) => <StatCardSkeleton key={i} />)
-        ) : (
-          <>
-            <StatCard
-              label="Total Cyclists"
-              value={stats.cyclists.toLocaleString()}
-              trend={`${stats.cyclists.toLocaleString()} unique riders`}
-              icon={Users}
-              iconBg="bg-blue-600"
-            />
-            <StatCard
-              label="Total Registrations"
-              value={stats.totalRegs.toLocaleString()}
-              trend="Latest registrations snapshot"
-              icon={ClipboardList}
-              iconBg="bg-emerald-600"
-            />
-            <StatCard
-              label="Active Events"
-              value={String(stats.activeEvents)}
-              trend="Published events"
-              icon={CalendarDays}
-              iconBg="bg-violet-600"
-            />
-            <StatCard
-              label="Paid Registrations"
-              value={stats.paid.toLocaleString()}
-              trend="Successful payment status"
-              icon={CreditCard}
-              iconBg="bg-teal-600"
-            />
-            <StatCard
-              label="Revenue Summary"
-              value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
-              trend="From paid payment orders"
-              icon={Bike}
-              iconBg="bg-lime-600"
-            />
-          </>
-        )}
-      </div>
+      <div className="space-y-6">
 
-      {/* ── Charts ─────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} />)
-        ) : (
-          <>
-            <ChartPlaceholder title="Monthly Registrations">
-              <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
-            </ChartPlaceholder>
-            <ChartPlaceholder title="Revenue Analytics">
-              <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
-            </ChartPlaceholder>
-            <ChartPlaceholder title="Event Participation Trends">
-              <EventParticipationBarChartJs
-                labels={eventParticipationSeries.labels}
-                data={eventParticipationSeries.data}
-                usePercentScale={eventParticipationSeries.usePercentScale}
+        {/* ── Stat Cards ─────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => <StatCardSkeleton key={i} />)
+          ) : (
+            <>
+              <StatCard
+                label="Total Cyclists"
+                value={stats.cyclists.toLocaleString()}
+                trend={`${stats.cyclists.toLocaleString()} unique riders`}
+                icon={Users}
+                iconBg="bg-blue-600"
               />
-            </ChartPlaceholder>
-            <ChartPlaceholder title="Category Participation">
-              <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
-            </ChartPlaceholder>
-          </>
-        )}
-      </div>
+              <StatCard
+                label="Total Registrations"
+                value={stats.totalRegs.toLocaleString()}
+                trend="Latest registrations snapshot"
+                icon={ClipboardList}
+                iconBg="bg-emerald-600"
+              />
+              <StatCard
+                label="Active Events"
+                value={String(stats.activeEvents)}
+                trend="Published events"
+                icon={CalendarDays}
+                iconBg="bg-violet-600"
+              />
+              <StatCard
+                label="Paid Registrations"
+                value={stats.paid.toLocaleString()}
+                trend="Successful payment status"
+                icon={CreditCard}
+                iconBg="bg-teal-600"
+              />
+              <StatCard
+                label="Revenue Summary"
+                value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
+                trend="From paid payment orders"
+                icon={Bike}
+                iconBg="bg-lime-600"
+              />
+            </>
+          )}
+        </div>
 
-      {/* ── Bottom Row ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {/* ── Charts ─────────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} />)
+          ) : (
+            <>
+              <ChartPlaceholder title="Monthly Registrations">
+                <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
+              </ChartPlaceholder>
+              <ChartPlaceholder title="Revenue Analytics">
+                <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
+              </ChartPlaceholder>
+              <ChartPlaceholder title="Event Participation Trends">
+                <EventParticipationBarChartJs
+                  labels={eventParticipationSeries.labels}
+                  data={eventParticipationSeries.data}
+                  usePercentScale={eventParticipationSeries.usePercentScale}
+                />
+              </ChartPlaceholder>
+              <ChartPlaceholder title="Category Participation">
+                <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
+              </ChartPlaceholder>
+            </>
+          )}
+        </div>
 
-        {/* Recent Registrations */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm xl:col-span-1">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">Recent Registrations</h3>
-            <Link to="/admin/registrations" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-              View all
-            </Link>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[320px] text-left text-sm">
-              <thead className="bg-slate-50 text-xs text-slate-500">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Rider</th>
-                  <th className="px-4 py-2 font-medium">Event</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {loading ? (
-                  Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)
-                ) : error ? (
+        {/* ── Bottom Row ─────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+
+          {/* Recent Registrations */}
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm xl:col-span-1">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">Recent Registrations</h3>
+              <Link to="/admin/registrations" className="text-xs font-medium text-[#1e4a8e] hover:underline">
+                View all
+              </Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[320px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs text-slate-500">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 text-rose-600">
-                      {error}
-                    </td>
+                    <th className="px-4 py-2 font-medium">Rider</th>
+                    <th className="px-4 py-2 font-medium">Event</th>
+                    <th className="px-4 py-2 font-medium">Status</th>
+                    <th className="px-4 py-2 font-medium">Date</th>
                   </tr>
-                ) : recent.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                      No registrations yet.
-                    </td>
-                  </tr>
-                ) : (
-                  recent.map((r) => (
-                    <tr key={r.id} className="text-slate-800">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                            {riderAvatarInitials(r)}
-                          </span>
-                          <span className="max-w-[140px] truncate text-xs sm:text-sm" title={riderDisplayName(r)}>
-                            {riderDisplayName(r)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="max-w-[100px] truncate px-4 py-3 text-xs sm:text-sm">
-                        {r.event_title ?? r.race_type ?? '—'}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPill(String(r.payment_status ?? 'pending'))}`}
-                        >
-                          {String(r.payment_status ?? 'pending')}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
-                        {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)
+                  ) : error ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 text-rose-600">
+                        {error}
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : recent.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                        No registrations yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    recent.map((r) => (
+                      <tr key={r.id} className="text-slate-800">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                              {riderAvatarInitials(r)}
+                            </span>
+                            <span className="max-w-[140px] truncate text-xs sm:text-sm" title={riderDisplayName(r)}>
+                              {riderDisplayName(r)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="max-w-[100px] truncate px-4 py-3 text-xs sm:text-sm">
+                          {r.event_title ?? r.race_type ?? '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPill(String(r.payment_status ?? 'pending'))}`}
+                          >
+                            {String(r.payment_status ?? 'pending')}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
+                          {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
 
-        {/* Upcoming Events */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">Upcoming Events</h3>
-            <Link to="/admin/events" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-              Manage
-            </Link>
+          {/* Upcoming Events */}
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">Upcoming Events</h3>
+              <Link to="/admin/events" className="text-xs font-medium text-[#1e4a8e] hover:underline">
+                Manage
+              </Link>
+            </div>
+            <ul className="divide-y divide-slate-100 p-2">
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => <EventItemSkeleton key={i} />)
+              ) : events.length === 0 ? (
+                <li className="px-3 py-4 text-xs text-slate-500">No events found.</li>
+              ) : (
+                events.slice(0, 5).map((ev) => {
+                  const registered = registrationCountByEvent.get(ev.id) ?? 0
+                  const cap = Number(ev.rider_limit ?? 0)
+                  const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
+                  return (
+                    <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+                      <img
+                        src={posterSrc}
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
+                        onError={(e) => {
+                          e.currentTarget.src = '/bg2.png'
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
+                        <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
+                        </p>
+                      </div>
+                      <span
+                        className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
+                      </span>
+                    </li>
+                  )
+                })
+              )}
+            </ul>
           </div>
-          <ul className="divide-y divide-slate-100 p-2">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <EventItemSkeleton key={i} />)
-            ) : events.length === 0 ? (
-              <li className="px-3 py-4 text-xs text-slate-500">No events found.</li>
-            ) : (
-              events.slice(0, 5).map((ev) => {
-                const registered = registrationCountByEvent.get(ev.id) ?? 0
-                const cap = Number(ev.rider_limit ?? 0)
-                const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
-                return (
-                  <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                    <img
-                      src={posterSrc}
-                      alt=""
-                      className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
-                      onError={(e) => {
-                        e.currentTarget.src = '/bg2.png'
-                      }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
-                      <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
-                      <p className="mt-1 text-xs text-slate-600">
-                        Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
+
+          {/* Latest Announcements */}
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">Latest Announcements</h3>
+              <Link to="/admin/announcements" className="text-xs font-medium text-[#1e4a8e] hover:underline">
+                New
+              </Link>
+            </div>
+            <ul className="divide-y divide-slate-100 p-2">
+              {loading ? (
+                Array.from({ length: 5 }).map((_, i) => <AnnouncementItemSkeleton key={i} />)
+              ) : announcements.length === 0 ? (
+                <li className="px-3 py-4 text-xs text-slate-500">No announcements found.</li>
+              ) : (
+                announcements.map((a) => (
+                  <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
+                    <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
+                      <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
                       </p>
                     </div>
-                    <span
-                      className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                      }`}
-                    >
-                      {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
-                    </span>
                   </li>
-                )
-              })
-            )}
-          </ul>
-        </div>
-
-        {/* Latest Announcements */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-semibold text-slate-900">Latest Announcements</h3>
-            <Link to="/admin/announcements" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-              New
-            </Link>
+                ))
+              )}
+            </ul>
           </div>
-          <ul className="divide-y divide-slate-100 p-2">
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => <AnnouncementItemSkeleton key={i} />)
-            ) : announcements.length === 0 ? (
-              <li className="px-3 py-4 text-xs text-slate-500">No announcements found.</li>
-            ) : (
-              announcements.map((a) => (
-                <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                  <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
-                    <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
-                    <p className="mt-1 text-[10px] text-slate-400">
-                      {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
-                    </p>
-                  </div>
-                </li>
-              ))
-            )}
-          </ul>
         </div>
-      </div>
 
-      {/* ── Quick Actions ───────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <h3 className="text-sm font-semibold text-slate-900">Quick Actions</h3>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-          {quickActions.map(({ label, to, icon: Icon }) => (
-            <Link
-              key={to}
-              to={to}
-              className="flex flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-4 text-center text-xs font-medium text-slate-800 transition hover:border-[#1e4a8e]/40 hover:bg-slate-50"
-            >
-              <Icon className="h-5 w-5 text-[#1e4a8e]" strokeWidth={2} />
-              {label}
-            </Link>
-          ))}
+        {/* ── Quick Actions ───────────────────────────────────────────────────── */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <h3 className="text-sm font-semibold text-slate-900">Quick Actions</h3>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+            {quickActions.map(({ label, to, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
+                className="flex flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-4 text-center text-xs font-medium text-slate-800 transition hover:border-[#1e4a8e]/40 hover:bg-slate-50"
+              >
+                <Icon className="h-5 w-5 text-[#1e4a8e]" strokeWidth={2} />
+                {label}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }

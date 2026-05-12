@@ -2229,7 +2229,12 @@ function EventCard({
         </div>
 
         <div className="text-xs">
-          <p className="font-medium text-red-500">{formatDate(event.registration_deadline ?? event.event_date)}</p>
+          <p className="font-medium text-red-500">
+            {formatDate(event.registration_deadline ?? event.event_date)}
+            {event.registration_deadline ? (
+              <span className="text-red-600 font-normal"> · {formatTime(event.registration_deadline as string)}</span>
+            ) : null}
+          </p>
           <p className="mt-1 text-slate-500" title={`Fee: ${feeDisplay}`}>Paid registrations</p>
           <p className="font-semibold text-blue-600">
             {registrations.toLocaleString()} / {riderLimit.toLocaleString()}
