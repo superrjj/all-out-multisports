@@ -31,8 +31,8 @@ export function PageNotCreated({ pageName }: Props) {
         </svg>
         <p className="text-3xl font-semibold text-slate-800">Page is not created</p>
         <p className="mt-2 text-sm text-slate-500">
-          The <span className="font-semibold text-slate-700">{pageName}</span> page has not been created yet.
-          Once it is set up, you will be able to view and manage it here.
+          The <span className="font-semibold text-slate-700">{pageName}</span> page is not available yet.
+          It’s still being set up and will appear here once ready.
         </p>
       </div>
     </section>
