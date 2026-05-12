@@ -819,7 +819,7 @@ function Step2({
 
       {disciplines.length > 0 && (
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700 space-y-1.5">
-          <p>ℹ️ Rider limit is the maximum number of participants allowed for each category.</p>
+          <p>Rider limit is the maximum number of participants allowed for each category.</p>
           <p>
             Paid riders get a <strong>4-digit numeric bib</strong> (class 01–99 + rider 01–99). Each{' '}
             <strong>event type × category</strong> pair gets its own class when you publish; keep (types × categories) ≤ 99.
