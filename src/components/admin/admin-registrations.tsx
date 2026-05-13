@@ -120,6 +120,7 @@ export function AdminRegistrations() {
   const [rows, setRows] = useState<AdminRegistrationRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printLoading, setPrintLoading] = useState(false)
   const [q, setQ] = useState('')
   const [disciplineFilter, setDisciplineFilter] = useState('all')
   const [entryEventTypeFilter, setEntryEventTypeFilter] = useState('all')
@@ -217,61 +218,65 @@ export function AdminRegistrations() {
   }
 
   async function handlePrintRaceBibs() {
-    const printableRows = filtered
-      .map((row) => {
-        const riderName = String(row.rider_full_name ?? '').trim()
-        const bibNumber = String(row.bib_number ?? '').trim()
-        const jerseySize = String(row.jersey_size ?? '').trim()
-        const eventType = String(row.entry_event_type_label ?? formatEventTypeSlugLabel(row.entry_event_type_slug)).trim()
-        const discipline = String(row.discipline ?? '').trim()
-        const category = String(row.age_category ?? '').trim()
-        return { riderName, bibNumber, jerseySize, eventType, discipline, category }
+    if (printLoading) return
+    setPrintLoading(true)
+    setActionBanner(null)
+    try {
+      const printableRows = filtered
+        .map((row) => {
+          const riderName = String(row.rider_full_name ?? '').trim()
+          const bibNumber = String(row.bib_number ?? '').trim()
+          const jerseySize = String(row.jersey_size ?? '').trim()
+          const eventType = String(row.entry_event_type_label ?? formatEventTypeSlugLabel(row.entry_event_type_slug)).trim()
+          const discipline = String(row.discipline ?? '').trim()
+          const category = String(row.age_category ?? '').trim()
+          return { riderName, bibNumber, jerseySize, eventType, discipline, category }
+        })
+        .filter((row) => row.riderName && row.bibNumber)
+
+      if (printableRows.length === 0) {
+        setActionBanner({
+          text: 'No printable rows. Make sure riders already have bib numbers assigned.',
+          tone: 'warning',
+        })
+        return
+      }
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
+      doc.setFont('times', 'normal')
+
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 40
+      const tableWidth = pageWidth - margin * 2
+      const colWidths = [
+        tableWidth * 0.1,
+        tableWidth * 0.48,
+        tableWidth * 0.2,
+        tableWidth * 0.22,
+      ]
+      const headers = ['No.', 'Rider Name', 'Jersey Size', 'Bib Number']
+      const rowHeight = 24
+      const headerHeight = 28
+      const tableTopStart = 110
+      const groupLabelGap = 6
+
+      const toBibSortKey = (bib: string) => {
+        const normalized = String(bib ?? '').trim()
+        const match = normalized.match(/\d+/)
+        const numeric = match ? Number.parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER
+        return { numeric, normalized: normalized.toLowerCase() }
+      }
+
+      const sortedRows = [...printableRows].sort((a, b) => {
+        if (a.eventType !== b.eventType) return a.eventType.localeCompare(b.eventType)
+        if (a.discipline !== b.discipline) return a.discipline.localeCompare(b.discipline)
+        if (a.category !== b.category) return a.category.localeCompare(b.category)
+        const ak = toBibSortKey(a.bibNumber)
+        const bk = toBibSortKey(b.bibNumber)
+        if (ak.numeric !== bk.numeric) return ak.numeric - bk.numeric
+        return ak.normalized.localeCompare(bk.normalized)
       })
-      .filter((row) => row.riderName && row.bibNumber)
-
-    if (printableRows.length === 0) {
-      setActionBanner({
-        text: 'No printable rows. Make sure riders already have bib numbers assigned.',
-        tone: 'warning',
-      })
-      return
-    }
-
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
-    doc.setFont('times', 'normal')
-
-    const pageWidth = doc.internal.pageSize.getWidth()
-    const pageHeight = doc.internal.pageSize.getHeight()
-    const margin = 40
-    const tableWidth = pageWidth - margin * 2
-    const colWidths = [
-      tableWidth * 0.1,
-      tableWidth * 0.48,
-      tableWidth * 0.2,
-      tableWidth * 0.22,
-    ]
-    const headers = ['No.', 'Rider Name', 'Jersey Size', 'Bib Number']
-    const rowHeight = 24
-    const headerHeight = 28
-    const tableTopStart = 110
-    const groupLabelGap = 6
-
-    const toBibSortKey = (bib: string) => {
-      const normalized = String(bib ?? '').trim()
-      const match = normalized.match(/\d+/)
-      const numeric = match ? Number.parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER
-      return { numeric, normalized: normalized.toLowerCase() }
-    }
-
-    const sortedRows = [...printableRows].sort((a, b) => {
-      if (a.eventType !== b.eventType) return a.eventType.localeCompare(b.eventType)
-      if (a.discipline !== b.discipline) return a.discipline.localeCompare(b.discipline)
-      if (a.category !== b.category) return a.category.localeCompare(b.category)
-      const ak = toBibSortKey(a.bibNumber)
-      const bk = toBibSortKey(b.bibNumber)
-      if (ak.numeric !== bk.numeric) return ak.numeric - bk.numeric
-      return ak.normalized.localeCompare(bk.normalized)
-    })
 
     const groupMap = new Map<string, typeof sortedRows>()
     for (const row of sortedRows) {
@@ -404,7 +409,10 @@ export function AdminRegistrations() {
       }
     }
 
-    doc.save(`HNA-Race-Bib-List-${new Date().toISOString().slice(0, 10)}.pdf`)
+      doc.save(`HNA-Race-Bib-List-${new Date().toISOString().slice(0, 10)}.pdf`)
+    } finally {
+      setPrintLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -817,10 +825,11 @@ export function AdminRegistrations() {
             <button
               type="button"
               onClick={() => { void handlePrintRaceBibs() }}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              disabled={printLoading}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Printer className="h-3.5 w-3.5" />
-              Print Race Bibs
+              {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              {printLoading ? 'Preparing PDF…' : 'Print Race Bibs'}
             </button>
             <button
               type="button"
