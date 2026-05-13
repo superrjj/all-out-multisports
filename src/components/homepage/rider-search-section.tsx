@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { ChevronRight, Info, Loader2, Search, X } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { Loader2, Search} from 'lucide-react'
 import { publicRiderSearchApi, type PublicRiderSearchRow } from '../../services/publicRiderSearchApi'
 import { normalizeRiderSearchQuery, sanitizeRiderSearchDisplay } from '../../utils/riderSearchSecurity'
 
@@ -73,8 +73,8 @@ export function RiderSearchSection() {
           <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[1.65rem]">
             Search riders
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">
-            Confirmed entries only. Use the rider&apos;s registered name as it appears on the registration form.
+          <p className="mt-3 text-sm leading-relaxed text-slate-600">
+            Only confirmed registrations are shown. Please search using the rider’s registered name.
           </p>
         </div>
 
@@ -91,7 +91,16 @@ export function RiderSearchSection() {
                   ref={inputRef}
                   type="search"
                   value={query}
-                  onChange={(e) => setQuery(normalizeRiderSearchQuery(e.target.value))}
+                  onChange={(e) => {
+                    const val = normalizeRiderSearchQuery(e.target.value)
+                    setQuery(val)
+                    if (val === '') {
+                      setResults([])
+                      setSubmittedQuery('')
+                      setShowResultsPanel(false)
+                      setError(null)
+                    }
+                  }}
                   maxLength={100}
                   spellCheck={false}
                   onKeyDown={(e) => {
@@ -114,7 +123,7 @@ export function RiderSearchSection() {
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 transition hover:bg-slate-200/70 hover:text-slate-700"
                     aria-label="Clear search"
                   >
-                    <X className="h-4 w-4" />
+                   
                   </button>
                 ) : null}
               </div>
@@ -232,20 +241,6 @@ export function RiderSearchSection() {
             )}
           </div>
         ) : null}
-
-        <div className="mt-10 flex flex-col gap-3 rounded-lg border border-amber-200/70 bg-amber-50/90 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="flex items-start gap-2.5 text-sm leading-relaxed text-amber-950/90">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-800/80" aria-hidden />
-            <span>Wear your bib number visibly during the race so marshals can identify you quickly.</span>
-          </p>
-          <Link
-            to="/register/info"
-            className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-[#0c2340] underline decoration-slate-400 underline-offset-4 transition hover:decoration-[#0c2340]"
-          >
-            Need help? Contact us
-            <ChevronRight className="h-4 w-4" aria-hidden />
-          </Link>
-        </div>
       </div>
     </section>
   )
