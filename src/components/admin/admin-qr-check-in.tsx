@@ -960,7 +960,7 @@ export function AdminQrCheckIn() {
 
       <SectionCard
         title="Manual rider lookup"
-        subtitle="If the rider has no QR, search by bib or registered name. One match opens the claim modal directly; several matches show a table first — press Claim on the correct row to open the modal."
+        subtitle="No QR? Search by bib number or rider name, then select the correct rider to claim."
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <label className="min-w-0 flex-1">
@@ -992,7 +992,7 @@ export function AdminQrCheckIn() {
           <div className="mt-5 overflow-hidden rounded-lg border border-slate-200 bg-white">
             <p className="border-b border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
               <span className="font-semibold text-slate-900">{manualMatchRows.length} riders</span> matched. Use{' '}
-              <span className="font-semibold">Claim</span> on the correct row — the confirmation modal opens only for that rider.
+             <span className="font-semibold">Claim</span> on the correct rider to open the confirmation window.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] divide-y divide-slate-200 text-sm">
@@ -1037,7 +1037,7 @@ export function AdminQrCheckIn() {
 
       <SectionCard
         title="Race kit claims"
-        subtitle="Recent check-ins for riders with an assigned bib only (includes QR scans and manual lookups)."
+        subtitle="Shows recent rider check-ins with assigned bib numbers, including QR scans and manual searches."
       >
         <div className="mb-3">
           <input

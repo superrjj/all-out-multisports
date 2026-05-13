@@ -83,7 +83,15 @@ export function Hero() {
               <ChevronRight className="h-3.5 w-3.5" />
             </Link>
             <Link
-              to={{ pathname: riderSearchPath, hash: 'rider-search' }}
+              to={{ pathname: riderSearchPath, hash: '#rider-search' }}
+              onClick={() => {
+                const section = document.getElementById('rider-search')
+                if (section) {
+                  section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  const input = section.querySelector<HTMLInputElement>('input[type="search"]')
+                  input?.focus({ preventScroll: true })
+                }
+              }}
               className="inline-flex items-center gap-2 rounded-full border border-white/40 bg-black/25 px-6 py-3.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-sm backdrop-blur-md transition hover:border-[#cfae3f]/80 hover:bg-black/35 sm:px-8 sm:py-4 sm:text-xs"
             >
               <Search className="h-4 w-4 shrink-0 text-[#cfae3f]" aria-hidden />
