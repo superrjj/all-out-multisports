@@ -1,6 +1,7 @@
 import { User, ChevronRight, Search } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { RiderSearchSection } from './rider-search-section'
+import { SponsorsSection } from './sponsors-section'
 
 export function Hero() {
   const { pathname } = useLocation()
@@ -90,7 +91,7 @@ export function Hero() {
               const section = document.getElementById('rider-search')
               if (section) {
                 section.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                const input = section.querySelector<HTMLInputElement>('input[type="search"]')
+                const input = section.querySelector<HTMLInputElement>('input')
                 input?.focus({ preventScroll: true })
               }
               // Clear the hash from the URL so refresh doesn't re-scroll
@@ -105,6 +106,7 @@ export function Hero() {
         </div>
       </section>
       <RiderSearchSection />
+      <SponsorsSection />
     </div>
   )
 }
