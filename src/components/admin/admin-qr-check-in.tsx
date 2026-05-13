@@ -707,28 +707,6 @@ export function AdminQrCheckIn() {
     return () => stopCamera()
   }, [startCamera, stopCamera])
 
-  useEffect(() => {
-    const ensureCameraRunning = () => {
-      if (!controlsRef.current) {
-        void startCamera()
-      }
-    }
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') ensureCameraRunning()
-    }
-
-    window.addEventListener('focus', ensureCameraRunning)
-    window.addEventListener('pageshow', ensureCameraRunning)
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    return () => {
-      window.removeEventListener('focus', ensureCameraRunning)
-      window.removeEventListener('pageshow', ensureCameraRunning)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [startCamera])
-
   const tableEventTypeDisplay = useCallback(
     (row: Record<string, unknown>) => {
       const rid = String(row.registration_id ?? '')
