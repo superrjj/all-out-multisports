@@ -493,7 +493,7 @@ export function AdminRegistrations() {
         r.id.toLowerCase().includes(query) ||
         String(r.rider_full_name ?? '').toLowerCase().includes(query) ||
         String(r.registrant_email ?? '').toLowerCase().includes(query) ||
-        String(r.event_title ?? '').toLowerCase().includes(query) ||
+          String(r.event_title ?? '').toLowerCase().includes(query) ||
         String(r.race_type ?? '').toLowerCase().includes(query) ||
         String(r.discipline ?? '').toLowerCase().includes(query) ||
         String(r.age_category ?? '').toLowerCase().includes(query) ||
@@ -698,6 +698,14 @@ export function AdminRegistrations() {
         certWarning = ` Certificate: ${(certErr as Error).message || 'file was not stored.'}`
       }
 
+      let emailWarning = ''
+      try {
+        const sent = await adminApi.adminSendRaceKitEmail(row.id)
+        if (sent?.error) throw new Error(sent.error)
+      } catch (mailErr) {
+        emailWarning = ` Email: ${(mailErr as Error).message || 'failed to send QR code email.'}`
+      }
+
       setRows((prev) =>
         prev.map((item) =>
           item.id === row.id
@@ -706,8 +714,8 @@ export function AdminRegistrations() {
         ),
       )
       setActionBanner({
-        text: `Bib ${nextBib} assigned for ${label}.${certWarning}`,
-        tone: certWarning ? 'warning' : 'success',
+        text: `Bib ${nextBib} assigned for ${label}.${certWarning}${emailWarning}`,
+        tone: certWarning || emailWarning ? 'warning' : 'success',
       })
     } catch (e) {
       setActionBanner({
