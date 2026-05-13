@@ -44,6 +44,20 @@ export interface AdminRiderDetailRow {
   jersey_size?: string | null
 }
 
+/** Turn raw Postgres duplicate-bib errors into a short admin-facing message. */
+function humanizeDuplicateBibError(text: string): string {
+  const t = String(text ?? '').trim()
+  const lower = t.toLowerCase()
+  if (
+    lower.includes('registration_forms_bib_number_key') ||
+    (lower.includes('duplicate key') && lower.includes('bib_number')) ||
+    (lower.includes('unique constraint') && lower.includes('bib_number'))
+  ) {
+    return 'That bib number is already used by another registration. Click Generate again. If it keeps failing, search registration_forms in Supabase for the duplicate bib_number.'
+  }
+  return t
+}
+
 async function invokeEdgeErrorMessage(error: unknown, responseData: unknown, fallback: string): Promise<string> {
   const wrap = (raw: string) => {
     const t = String(raw ?? '').trim()
@@ -379,7 +393,12 @@ export const adminApi = {
     const { data, error } = await supabase.functions.invoke('admin-generate-bib', {
       body: { registrationId },
     })
-    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not assign bib.'))
+    if (error) {
+      const raw = await invokeEdgeErrorMessage(error, data, 'Could not assign bib.')
+      throw new Error(humanizeDuplicateBibError(raw))
+    }
+    const bodyError = data && typeof data === 'object' ? String((data as { error?: string }).error ?? '').trim() : ''
+    if (bodyError) throw new Error(humanizeDuplicateBibError(bodyError))
     return data as { ok: boolean; bib_number?: string; provider_reference?: string; error?: string }
   },
 

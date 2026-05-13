@@ -36,6 +36,19 @@ function parseEventTypeSlugs(raw: unknown): string[] {
     .filter(Boolean)
 }
 
+/** Postgres unique violation on `registration_forms.bib_number`, or concurrent assign race. */
+function isUniqueBibNumberConflict(err: unknown): boolean {
+  const e = err as { code?: string; message?: string; details?: string } | null
+  const code = String(e?.code ?? '')
+  const msg = `${String(e?.message ?? '')} ${String(e?.details ?? '')}`.toLowerCase()
+  if (code === '23505') return true
+  if (msg.includes('registration_forms_bib_number_key')) return true
+  if (msg.includes('duplicate key') && msg.includes('bib_number')) return true
+  return false
+}
+
+const BIB_ASSIGN_RACE_RETRY = 'BIB_ASSIGN_RACE_RETRY'
+
 /**
  * Avoid race: two PayMongo paths (webhook + checkout redirect) can call assign concurrently.
  * Only one UPDATE should win; the other must not overwrite (e.g. 2101 → 2102) when both computed max=0.
@@ -57,8 +70,10 @@ async function updateRegistrationBibIfStillNull(
   return true
 }
 
-/** Assign bib for one registration if missing; registration should already be status confirmed when paid. */
-export async function assignBibIfMissing(supabase: SupabaseClient, registrationId: string) {
+/**
+ * One attempt to compute next bib and claim it. Retried by `assignBibIfMissing` on unique conflicts / races.
+ */
+async function assignBibIfMissingOnce(supabase: SupabaseClient, registrationId: string) {
   const now = new Date().toISOString()
   const { data: registration, error: registrationError } = await supabase
     .from('registration_forms')
@@ -107,15 +122,14 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
     }
     const classTwoDigit = String(classNum).padStart(2, '0')
 
+    // `bib_number` is unique across ALL rows; overlaps can exist across categories/types.
+    // Scan every bib for this event whose first two digits match this class (4-digit bibs only).
     const { data: existingBibs, error: bibError } = await supabase
       .from('registration_forms')
       .select('bib_number')
       .eq('event_id', registration.event_id)
-      .eq('race_category_id', registration.race_category_id)
-      .eq('entry_event_type_slug', eventTypeSlug)
-      .eq('status', 'confirmed')
       .not('bib_number', 'is', null)
-      .order('created_at', { ascending: true })
+      .like('bib_number', `${classTwoDigit}__`)
       .limit(5000)
     if (bibError) throw bibError
 
@@ -125,17 +139,36 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
     }, 0)
     const nextSequence = maxSequence + 1
     const riderLimit = Number(raceCategory?.rider_limit ?? 0)
-    if (Number.isFinite(riderLimit) && riderLimit > 0 && nextSequence > riderLimit) {
-      const categoryCode = String(raceCategory?.category_name ?? '').trim() || 'category'
-      throw new Error(`Category limit reached for ${categoryCode}. Max riders: ${riderLimit}.`)
+    if (Number.isFinite(riderLimit) && riderLimit > 0) {
+      const { count: assignedInCategory, error: cntErr } = await supabase
+        .from('registration_forms')
+        .select('*', { count: 'exact', head: true })
+        .eq('event_id', registration.event_id)
+        .eq('race_category_id', registration.race_category_id)
+        .eq('entry_event_type_slug', eventTypeSlug)
+        .eq('status', 'confirmed')
+        .not('bib_number', 'is', null)
+      if (cntErr) throw cntErr
+      if ((assignedInCategory ?? 0) >= riderLimit) {
+        const categoryCode = String(raceCategory?.category_name ?? '').trim() || 'category'
+        throw new Error(`Category limit reached for ${categoryCode}. Max riders: ${riderLimit}.`)
+      }
     }
     if (nextSequence > 99) {
       throw new Error(`Bib sequence exceeded 99 for class ${classTwoDigit}.`)
     }
     const nextBib = `${classTwoDigit}${String(nextSequence).padStart(2, '0')}`
 
-    await updateRegistrationBibIfStillNull(supabase, registrationId, nextBib, now)
-    return
+    const assigned = await updateRegistrationBibIfStillNull(supabase, registrationId, nextBib, now)
+    if (assigned) return
+    const { data: recheck, error: recheckErr } = await supabase
+      .from('registration_forms')
+      .select('bib_number')
+      .eq('id', registrationId)
+      .maybeSingle()
+    if (recheckErr) throw recheckErr
+    if (String(recheck?.bib_number ?? '').trim()) return
+    throw new Error(BIB_ASSIGN_RACE_RETRY)
   }
 
   // Legacy bibs (events saved before event_race_bib_classes): prefix = event_code + category.code + NN
@@ -152,15 +185,13 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   const eventTypeCode = eventTypeCodeRaw || fallbackEventTypeCodeFromSlug(eventTypeSlug)
   const bibPrefix = `${eventTypeCode}${categoryCode}`
 
+  // Same global uniqueness issue as 4-digit path: any row in this event with this prefix blocks the value.
   const { data: existingBibsLegacy, error: bibErrorLegacy } = await supabase
     .from('registration_forms')
     .select('bib_number')
     .eq('event_id', registration.event_id)
-    .eq('race_category_id', registration.race_category_id)
-    .eq('entry_event_type_slug', eventTypeSlug)
-    .eq('status', 'confirmed')
     .not('bib_number', 'is', null)
-    .order('created_at', { ascending: true })
+    .like('bib_number', `${bibPrefix}%`)
     .limit(5000)
   if (bibErrorLegacy) throw bibErrorLegacy
 
@@ -170,17 +201,69 @@ export async function assignBibIfMissing(supabase: SupabaseClient, registrationI
   }, 0)
   const nextSequenceLegacy = maxSequenceLegacy + 1
   const riderLimitLegacy = Number(raceCategory?.rider_limit ?? 0)
-  if (Number.isFinite(riderLimitLegacy) && riderLimitLegacy > 0 && nextSequenceLegacy > riderLimitLegacy) {
-    throw new Error(
-      `Category limit reached for ${String(raceCategory?.category_name ?? categoryCode)}. Max riders: ${riderLimitLegacy}.`,
-    )
+  if (Number.isFinite(riderLimitLegacy) && riderLimitLegacy > 0) {
+    const { count: assignedInCategoryL, error: cntLErr } = await supabase
+      .from('registration_forms')
+      .select('*', { count: 'exact', head: true })
+      .eq('event_id', registration.event_id)
+      .eq('race_category_id', registration.race_category_id)
+      .eq('entry_event_type_slug', eventTypeSlug)
+      .eq('status', 'confirmed')
+      .not('bib_number', 'is', null)
+    if (cntLErr) throw cntLErr
+    if ((assignedInCategoryL ?? 0) >= riderLimitLegacy) {
+      throw new Error(
+        `Category limit reached for ${String(raceCategory?.category_name ?? categoryCode)}. Max riders: ${riderLimitLegacy}.`,
+      )
+    }
   }
   if (nextSequenceLegacy > 99) {
     throw new Error(`Category bib sequence exceeded 2 digits for prefix ${bibPrefix}.`)
   }
   const nextBibLegacy = `${bibPrefix}${String(nextSequenceLegacy).padStart(2, '0')}`
 
-  await updateRegistrationBibIfStillNull(supabase, registrationId, nextBibLegacy, now)
+  const assignedLegacy = await updateRegistrationBibIfStillNull(supabase, registrationId, nextBibLegacy, now)
+  if (assignedLegacy) return
+  const { data: recheckL, error: recheckLErr } = await supabase
+    .from('registration_forms')
+    .select('bib_number')
+    .eq('id', registrationId)
+    .maybeSingle()
+  if (recheckLErr) throw recheckLErr
+  if (String(recheckL?.bib_number ?? '').trim()) return
+  throw new Error(BIB_ASSIGN_RACE_RETRY)
+}
+
+/** Assign bib for one registration if missing; registration should already be status confirmed when paid. */
+export async function assignBibIfMissing(supabase: SupabaseClient, registrationId: string) {
+  /** Fewer rounds now that next-bib scan is event-wide (avoids long 500s from repeated unique violations). */
+  const maxAttempts = 6
+  let lastErr: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      await assignBibIfMissingOnce(supabase, registrationId)
+      return
+    } catch (e) {
+      lastErr = e
+      const msg = String((e as Error)?.message ?? '')
+      const retryable = isUniqueBibNumberConflict(e) || msg === BIB_ASSIGN_RACE_RETRY
+      if (retryable && attempt < maxAttempts - 1) continue
+      if (isUniqueBibNumberConflict(e)) {
+        throw new Error(
+          'That bib number is already assigned to another registration (unique constraint). Click Generate again. If this repeats, open Supabase → registration_forms and search for the duplicate bib_number.',
+        )
+      }
+      if (msg === BIB_ASSIGN_RACE_RETRY) {
+        throw new Error(
+          'Could not assign a bib after several attempts (likely concurrent updates). Click Generate again.',
+        )
+      }
+      throw e
+    }
+  }
+  throw new Error(
+    lastErr instanceof Error ? lastErr.message : 'Could not assign a unique bib after several attempts. Please try again.',
+  )
 }
 
 export async function markRegistrationConfirmed(

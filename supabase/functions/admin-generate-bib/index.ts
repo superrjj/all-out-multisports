@@ -168,7 +168,21 @@ Deno.serve(async (req) => {
     await assignBibIfMissing(supabase, registrationId)
     await finalizeBundleSiblingsPaid(supabase, registrationId)
   } catch (e) {
-    return jsonResponse({ error: (e as Error).message || 'Failed to generate bib number.' }, 500)
+    const raw = (e as Error).message || 'Failed to generate bib number.'
+    const lower = raw.toLowerCase()
+    if (
+      lower.includes('registration_forms_bib_number_key') ||
+      ((lower.includes('duplicate key') || lower.includes('unique constraint')) && lower.includes('bib_number'))
+    ) {
+      return jsonResponse(
+        {
+          error:
+            'That bib number is already assigned to another registration. Click Generate again. If it repeats, check Supabase for duplicate bib_number values.',
+        },
+        500,
+      )
+    }
+    return jsonResponse({ error: raw }, 500)
   }
 
   const { data: updated } = await supabase
