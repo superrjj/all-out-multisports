@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Loader2, Search} from 'lucide-react'
+import { Loader2, Search, X } from 'lucide-react'
 import { publicRiderSearchApi, type PublicRiderSearchRow } from '../../services/publicRiderSearchApi'
 import { normalizeRiderSearchQuery, sanitizeRiderSearchDisplay } from '../../utils/riderSearchSecurity'
 
@@ -65,7 +65,7 @@ export function RiderSearchSection() {
     <section
       ref={sectionRef}
       id="rider-search"
-      className="scroll-mt-24 border-t border-slate-200/90 bg-gradient-to-b from-slate-100 to-slate-50 px-4 py-14 sm:px-6 lg:px-8 lg:py-20"
+      className="scroll-mt-24 bg-slate-50 px-4 py-14 sm:px-6 lg:px-8 lg:py-20"
     >
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-8 max-w-xl">
@@ -78,7 +78,7 @@ export function RiderSearchSection() {
           </p>
         </div>
 
-        <div className="rounded-lg border border-slate-200/90 bg-white p-5 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.08)] sm:p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch sm:gap-3">
             <label className="block min-w-0 flex-1">
               <span className="mb-1.5 block text-xs font-medium text-slate-600">Name</span>
@@ -89,7 +89,7 @@ export function RiderSearchSection() {
                 />
                 <input
                   ref={inputRef}
-                  type="search"
+                  type="text"
                   value={query}
                   onChange={(e) => {
                     const val = normalizeRiderSearchQuery(e.target.value)
@@ -106,8 +106,9 @@ export function RiderSearchSection() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') void runSearch()
                   }}
+                  inputMode="search"
                   placeholder="e.g. Juan dela Cruz"
-                  className="w-full rounded-md border border-slate-200 bg-slate-50/50 py-2.5 pl-10 pr-10 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:ring-1 focus:ring-slate-300"
+                  className="h-12 w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-10 pr-10 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-1 focus:ring-slate-300"
                   autoComplete="off"
                 />
                 {query ? (
@@ -120,10 +121,10 @@ export function RiderSearchSection() {
                       setShowResultsPanel(false)
                       setError(null)
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 transition hover:bg-slate-200/70 hover:text-slate-700"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
                     aria-label="Clear search"
                   >
-                   
+                    <X className="h-4 w-4" aria-hidden />
                   </button>
                 ) : null}
               </div>
@@ -136,7 +137,7 @@ export function RiderSearchSection() {
                 type="button"
                 onClick={() => void runSearch()}
                 disabled={loading}
-                className="inline-flex h-[42px] min-w-[7.5rem] items-center justify-center gap-2 rounded-md px-5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
+                className="inline-flex h-12 min-w-[7.5rem] items-center justify-center gap-2 rounded-lg px-6 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
                 style={{ backgroundColor: navy }}
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Search className="h-4 w-4 opacity-90" aria-hidden />}
@@ -174,24 +175,24 @@ export function RiderSearchSection() {
                 {sanitizeRiderSearchDisplay(error, 400)}
               </p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                  <table className="w-full min-w-[560px] border-collapse text-left text-sm">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50">
-                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-slate-600">
+                      <tr className="border-b border-slate-200 bg-slate-50/70">
+                        <th className="whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                           Rider name
                         </th>
-                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-slate-600">
+                        <th className="whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                           Bib
                         </th>
-                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-slate-600">
+                        <th className="hidden whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600 sm:table-cell">
                           Event type
                         </th>
-                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-slate-600">
+                        <th className="hidden whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600 md:table-cell">
                           Discipline
                         </th>
-                        <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold text-slate-600">
+                        <th className="whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                           Category
                         </th>
                       </tr>
@@ -216,21 +217,33 @@ export function RiderSearchSection() {
                         results.map((row, i) => (
                           <tr
                             key={row.registrationId ?? `${row.riderName}-${row.bibNumber}`}
-                            className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}
+                            className={(i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40') + ' transition hover:bg-slate-50'}
                           >
-                            <td className="px-4 py-3.5 text-[15px] font-medium leading-snug text-slate-900">
-                              {sanitizeRiderSearchDisplay(row.riderName)}
+                            <td className="px-4 py-3.5 text-sm font-semibold leading-snug text-slate-900">
+                              <span className="block max-w-[14rem] truncate sm:max-w-none">
+                                {sanitizeRiderSearchDisplay(row.riderName)}
+                              </span>
                             </td>
                             <td className="px-4 py-3.5">
                               <span className="inline-flex min-w-[2.75rem] items-center justify-center rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs font-semibold tabular-nums text-slate-800">
                                 {sanitizeRiderSearchDisplay(row.bibNumber, 32)}
                               </span>
                             </td>
-                            <td className="max-w-[200px] px-4 py-3.5 text-slate-700 leading-snug">
-                              {sanitizeRiderSearchDisplay(row.eventType)}
+                            <td className="hidden max-w-[220px] px-4 py-3.5 text-slate-700 sm:table-cell">
+                              <span className="block truncate" title={sanitizeRiderSearchDisplay(row.eventType, 120)}>
+                                {sanitizeRiderSearchDisplay(row.eventType)}
+                              </span>
                             </td>
-                            <td className="px-4 py-3.5 text-slate-700">{sanitizeRiderSearchDisplay(row.discipline)}</td>
-                            <td className="px-4 py-3.5 text-slate-700">{sanitizeRiderSearchDisplay(row.category)}</td>
+                            <td className="hidden max-w-[200px] px-4 py-3.5 text-slate-700 md:table-cell">
+                              <span className="block truncate" title={sanitizeRiderSearchDisplay(row.discipline, 120)}>
+                                {sanitizeRiderSearchDisplay(row.discipline)}
+                              </span>
+                            </td>
+                            <td className="max-w-[240px] px-4 py-3.5 text-slate-700">
+                              <span className="block truncate" title={sanitizeRiderSearchDisplay(row.category, 120)}>
+                                {sanitizeRiderSearchDisplay(row.category)}
+                              </span>
+                            </td>
                           </tr>
                         ))
                       )}
