@@ -166,7 +166,7 @@ export const adminModulesApi = {
         .from('qr_checkins')
         .select('id, registration_id, scanned_code, scan_status, scanned_at')
         .order('scanned_at', { ascending: false })
-        .limit(15),
+        .limit(80),
       countRows('qr_checkins'),
     ])
     if (error) throw error
@@ -175,7 +175,7 @@ export const adminModulesApi = {
       string,
       { rider_name: string; discipline: string; category: string }
     >()
-    let registrationById = new Map<string, { event_id: string | null }>()
+    let registrationById = new Map<string, { event_id: string | null; bib_number: string | null }>()
     let eventById = new Map<string, { title: string; race_type: string }>()
     if (registrationIds.length > 0) {
       const [{ data: riders, error: riderError }, { data: registrations, error: registrationError }] = await Promise.all([
@@ -185,7 +185,7 @@ export const adminModulesApi = {
           .in('registration_id', registrationIds),
         supabase
           .from('registration_forms')
-          .select('id, event_id')
+          .select('id, event_id, bib_number')
           .in('id', registrationIds),
       ])
       if (riderError) throw riderError
@@ -203,7 +203,13 @@ export const adminModulesApi = {
       )
 
       registrationById = new Map(
-        (registrations ?? []).map((registration) => [String(registration.id), { event_id: registration.event_id ? String(registration.event_id) : null }]),
+        (registrations ?? []).map((registration) => [
+          String(registration.id),
+          {
+            event_id: registration.event_id ? String(registration.event_id) : null,
+            bib_number: registration.bib_number != null ? String(registration.bib_number) : null,
+          },
+        ]),
       )
 
       const eventIds = Array.from(
@@ -225,16 +231,20 @@ export const adminModulesApi = {
       rider_name: riderByRegistration.get(String(scan.registration_id ?? ''))?.rider_name ?? 'Registered rider',
       discipline: riderByRegistration.get(String(scan.registration_id ?? ''))?.discipline ?? '—',
       category: riderByRegistration.get(String(scan.registration_id ?? ''))?.category ?? '—',
+      bib_number: registrationById.get(String(scan.registration_id ?? ''))?.bib_number ?? null,
       event_type:
         eventById.get(String(registrationById.get(String(scan.registration_id ?? ''))?.event_id ?? ''))?.race_type ?? '—',
       event_title:
         eventById.get(String(registrationById.get(String(scan.registration_id ?? ''))?.event_id ?? ''))?.title ?? 'Current event',
     }))
+    const scansWithAssignedBib = scansWithRider
+      .filter((row) => String(row.bib_number ?? '').trim().length > 0)
+      .slice(0, 15)
     return {
-      scans: scansWithRider as Array<Record<string, unknown>>,
+      scans: scansWithAssignedBib as Array<Record<string, unknown>>,
       stats: {
         scans: scanCount,
-        valid: (scans ?? []).filter((item) => item.scan_status === 'valid').length,
+        valid: scansWithAssignedBib.filter((item) => item.scan_status === 'valid').length,
       },
     }
   },

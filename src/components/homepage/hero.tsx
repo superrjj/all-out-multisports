@@ -1,7 +1,11 @@
-import { User, ChevronRight} from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { User, ChevronRight, Search } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
+import { RiderSearchSection } from './rider-search-section'
 
 export function Hero() {
+  const { pathname } = useLocation()
+  const riderSearchPath = pathname === '/home' ? '/home' : '/'
+
   return (
     <div className="bg-[#131313] text-[#e5e2e1]">
       <section className="relative flex min-h-[calc(100svh-5rem)] items-center overflow-hidden border-b border-[#464932] px-4 py-16 sm:px-6 sm:py-20 lg:px-8 lg:py-24">
@@ -69,7 +73,7 @@ export function Hero() {
           </p>
 
           {/* CTA Buttons */}
-          <div className="mt-7 flex flex-wrap gap-3 sm:mt-8 sm:gap-4">
+          <div className="mt-7 flex flex-wrap items-center gap-3 sm:mt-8 sm:gap-4">
             <Link
               to="/register/info"
               className="inline-flex items-center gap-2.5 rounded-full bg-[#cfae3f] px-7 py-3.5 text-[11px] font-black uppercase tracking-[0.15em] text-black transition-all hover:bg-[#e2bf4e] hover:scale-105 sm:px-9 sm:py-4 sm:text-xs"
@@ -78,9 +82,17 @@ export function Hero() {
               Register Now
               <ChevronRight className="h-3.5 w-3.5" />
             </Link>
+            <Link
+              to={{ pathname: riderSearchPath, hash: 'rider-search' }}
+              className="inline-flex items-center gap-2 rounded-full border border-white/40 bg-black/25 px-6 py-3.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-sm backdrop-blur-md transition hover:border-[#cfae3f]/80 hover:bg-black/35 sm:px-8 sm:py-4 sm:text-xs"
+            >
+              <Search className="h-4 w-4 shrink-0 text-[#cfae3f]" aria-hidden />
+              Search rider
+            </Link>
           </div>
         </div>
       </section>
+      <RiderSearchSection />
     </div>
   )
 }
