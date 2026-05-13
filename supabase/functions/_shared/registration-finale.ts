@@ -21,6 +21,14 @@ function extractSequenceFromFourDigitClassBib(bibNumber: string, classTwoDigit: 
   return Number.isFinite(n) ? n : 0
 }
 
+/** Smallest n in [1, maxSeq] not taken (reuses freed numbers when a rider changes category and returns). */
+function lowestUnusedSequence(used: Set<number>, maxSeq: number): number | null {
+  for (let s = 1; s <= maxSeq; s++) {
+    if (!used.has(s)) return s
+  }
+  return null
+}
+
 function fallbackEventTypeCodeFromSlug(slug: string): string {
   const s = String(slug ?? '').trim().toLowerCase()
   if (s === 'criterium') return '1'
@@ -133,11 +141,12 @@ async function assignBibIfMissingOnce(supabase: SupabaseClient, registrationId: 
       .limit(5000)
     if (bibError) throw bibError
 
-    const maxSequence = (existingBibs ?? []).reduce((max: number, row: { bib_number: string }) => {
+    const usedSequences = new Set<number>()
+    for (const row of existingBibs ?? []) {
       const seq = extractSequenceFromFourDigitClassBib(row.bib_number, classTwoDigit)
-      return seq > max ? seq : max
-    }, 0)
-    const nextSequence = maxSequence + 1
+      if (seq > 0) usedSequences.add(seq)
+    }
+    const nextSequence = lowestUnusedSequence(usedSequences, 99)
     const riderLimit = Number(raceCategory?.rider_limit ?? 0)
     if (Number.isFinite(riderLimit) && riderLimit > 0) {
       const { count: assignedInCategory, error: cntErr } = await supabase
@@ -154,7 +163,7 @@ async function assignBibIfMissingOnce(supabase: SupabaseClient, registrationId: 
         throw new Error(`Category limit reached for ${categoryCode}. Max riders: ${riderLimit}.`)
       }
     }
-    if (nextSequence > 99) {
+    if (nextSequence == null) {
       throw new Error(`Bib sequence exceeded 99 for class ${classTwoDigit}.`)
     }
     const nextBib = `${classTwoDigit}${String(nextSequence).padStart(2, '0')}`
@@ -195,11 +204,12 @@ async function assignBibIfMissingOnce(supabase: SupabaseClient, registrationId: 
     .limit(5000)
   if (bibErrorLegacy) throw bibErrorLegacy
 
-  const maxSequenceLegacy = (existingBibsLegacy ?? []).reduce((max: number, row: { bib_number: string }) => {
+  const usedLegacy = new Set<number>()
+  for (const row of existingBibsLegacy ?? []) {
     const seq = extractBibSequenceByPrefix(row.bib_number, bibPrefix)
-    return seq > max ? seq : max
-  }, 0)
-  const nextSequenceLegacy = maxSequenceLegacy + 1
+    if (seq > 0) usedLegacy.add(seq)
+  }
+  const nextSequenceLegacy = lowestUnusedSequence(usedLegacy, 99)
   const riderLimitLegacy = Number(raceCategory?.rider_limit ?? 0)
   if (Number.isFinite(riderLimitLegacy) && riderLimitLegacy > 0) {
     const { count: assignedInCategoryL, error: cntLErr } = await supabase
@@ -217,7 +227,7 @@ async function assignBibIfMissingOnce(supabase: SupabaseClient, registrationId: 
       )
     }
   }
-  if (nextSequenceLegacy > 99) {
+  if (nextSequenceLegacy == null) {
     throw new Error(`Category bib sequence exceeded 2 digits for prefix ${bibPrefix}.`)
   }
   const nextBibLegacy = `${bibPrefix}${String(nextSequenceLegacy).padStart(2, '0')}`

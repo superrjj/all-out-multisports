@@ -434,7 +434,7 @@ export const adminApi = {
       body: input,
     })
     if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not save registration changes.'))
-    return data as { ok: boolean; error?: string }
+    return data as { ok: boolean; error?: string; bib_reassigned?: boolean; bib_number?: string }
   },
 
   async adminSendRaceKitEmail(registrationId: string) {
