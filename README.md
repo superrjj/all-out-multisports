@@ -1,58 +1,71 @@
 # Hari ng Ahon — Web Application
 
-**Cycling race registration and operations platform** for Hari ng Ahon and related events (Baguio City, Philippines). This document summarizes what is **already built in this repository**, how it is deployed and operated, and what is **planned or still to be completed**—intended for stakeholder review (including legal counsel).
+**Cycling race registration and operations platform** for Hari ng Ahon and related events (Baguio City, Philippines). This document summarizes what is **already built in this repository**, how it is deployed and operated, and what is **planned or still to be completed**. **Section 2** is written so **client counsel and other non-technical stakeholders** can see, at a glance, what the **public website** and **administration console** each do today, without reading code.
 
 ---
 
 ## 1. Purpose and scope
 
-The application supports:
+In one sentence: the system lets the public **learn about the race**, **look up confirmed participants**, and **register and pay online**; it lets **trusted staff** configure events, run registration and payments, use **QR codes** at the venue, prepare **results**, send **communications**, and pull **reports**.
 
-- **Public discovery** of the race brand and calls to action (register, search confirmed riders).
-- **Authenticated registration** for cyclists: event and category selection, profile capture, waiver and rules acknowledgment, and **online payment** (PayMongo).
-- **Administrator operations**: events, registrations, payments, QR-based race kit workflows, results-related tooling, communications modules, reporting, and configuration screens.
+More specifically, the application supports:
+
+- **Public website** — Brand presence, participant lookup, account sign-in, multi-step registration with waiver and rules acknowledgment, and PayMongo checkout (see **Section 2.1**).
+- **Administration console** — Dashboard, events, registrations, payments, QR kit and check-in, results data, announcements, gallery, cyclists, reports, settings, email tooling, waiver settings, logs, and an internal rider-dashboard preview (see **Section 2.2**).
 
 The stack is a **single-page React application** backed by **Supabase** (PostgreSQL, Auth, Storage, and Edge Functions). The frontend is built with **Vite**, **TypeScript**, and **Tailwind CSS**.
 
 ---
 
-## 2. What is implemented today (as of this codebase)
+## 2. Current features (what exists in the website today)
 
-### 2.1 Public website
+The following describes **live** capabilities as reflected in this repository. Items marked **not built yet** appear in the menu or roadmap but do not deliver full content to end users.
 
-| Area | Status | Notes |
-|------|--------|--------|
-| **Home / landing** (`/`, `/home`) | Implemented | Marketing hero, navigation shell, footer. Logged-in **admins** hitting `/` are redirected to the admin dashboard; `/home` forces the public landing for non-admin review. |
-| **Search rider** | Implemented | On the homepage, **Search rider** scrolls to the **Participant lookup** section, focuses the search field, and queries **confirmed registrations** via a secure Edge Function (`public-search-riders`). Results show sanitized fields (e.g. name, bib, event type, discipline, category). Client-side normalization and display sanitization reduce injection and abuse risk. |
-| **Register Now** flow | Implemented | Linear journey: **info** → **form** (requires login) → **payment** → **success**. |
-| **Registration info** (`/register/info`) | Implemented | Shows **published** events from the database, race dates, registration deadlines, discipline/category structure, and tire hints. Links into the authenticated registration form. |
-| **Registration form** (`/register/form`) | Implemented | Protected route: cyclist must be signed in. Submits registration through backend (`public-register` Edge Function pattern via app services). |
-| **Registration payment** (`/register/payment`) | Implemented | Multi-step checkout UI including **waiver**, **race rules**, and **PayMongo**-driven payment creation (`public-create-payment`). Handles return URLs and coordination with webhook/finalize flows (see backend). |
-| **Payment success** (`/register/payment-success`) | Implemented | Post-payment confirmation experience for the cyclist. |
-| **Authentication** (`/auth`) | Implemented | Email/password (and related Supabase Auth flows) via `AuthProvider`. **Role** is resolved from the `users` table (`admin` vs default cyclist) with JWT fallback for admin detection where applicable. **Redirect query** preservation supports payment return paths through login. |
-| **Events, Results, Gallery, About** (`/events`, `/results`, `/gallery`, `/about`) | **Placeholder** | Routes render a **“Page is not created”** state; navigation exists in the header but content pages are not built yet. |
+---
 
-### 2.2 Administration console
+### 2.1 Public website — for visitors and riders
 
-All admin routes require a signed-in user whose role is **admin**; others are redirected to the public home.
+**Audience:** Anyone browsing the site, plus cyclists who create an account to register and pay.
 
-| Module | Route | Purpose (high level) |
-|--------|--------|----------------------|
-| **Dashboard** | `/admin` | Operational overview: registration counts, payment/revenue aggregates, charts (registrations, revenue, participation, categories), recent registrations, upcoming events, announcements preview—wired to live admin APIs where data exists. |
-| **Events management** | `/admin/events` | Create/edit/publish events, venues, maps links, prizes, organizer contact blocks, race types, disciplines, categories, limits, posters/banners, and related metadata. |
-| **Registrations** | `/admin/registrations`, `/admin/registrations/:id` | List, filter, sort, search, export-oriented workflows; drill-down to a single registration with editing and operational actions supported by Edge Functions (e.g. updates, bib generation hooks where configured). |
-| **Online payments** | `/admin/payments` | PayMongo-oriented payment monitoring and verification workflows. |
-| **QR code race kit / check-in** | `/admin/qr-code-race-kit`, `/admin/check-in` | Scanner-based flows using **ZXing**; bib and rider lookup patterns for kit claim and venue check-in (shared component surface). |
-| **Results management** | `/admin/results` | API-backed **results ledger**: stats (row counts, published), table of bib, ranks, chip/gun times, and status. |
-| **Announcements** | `/admin/announcements` | Pinned notices and race communications management. |
-| **Gallery** | `/admin/gallery` | Media/album management for event photography. |
-| **Cyclists management** | `/admin/cyclists` | Cyclist profiles, teams, and account-related admin actions. |
-| **Reports** | `/admin/reports` | Exports and summary analytics. |
-| **Settings** | `/admin/settings` | Branding, payments, email, admin accounts, and related configuration. |
-| **Email notifications** | `/admin/email-notifications` | Templates and automated rider email concepts. |
-| **Rider dashboard (admin preview)** | `/admin/rider-dashboard` | Explains / surfaces **what cyclists could see** on the public side when a full cyclist portal is built; not a substitute for a public cyclist dashboard route. |
-| **Digital waiver** | `/admin/digital-waiver` | Consent capture configuration aligned with registration legal content. |
-| **System logs** | `/admin/system-logs` | Webhook and audit-oriented visibility (e.g. PayMongo pipeline diagnostics). |
+| What you see or do | What it does (plain language) |
+|--------------------|--------------------------------|
+| **Home page** | Introduces the race, highlights key actions, and provides site navigation and footer. Staff accounts marked as **admin** who open the main address are taken straight to the operations dashboard; they can still open the public home using **`/home`** when they need to review the site as a visitor would. |
+| **Participant lookup (“Search rider”)** | From the home page, a visitor can search **confirmed** entrants by name. The system returns limited, appropriate fields (for example name, bib number, event type, discipline, and category) so the public can verify participation without exposing unnecessary personal data. Search runs through a secure server function, with safeguards in the app to reduce misuse and data-display risks. |
+| **Register for a race (“Register now”)** | A guided path in four stages: **(1) Race information** — published events, dates, deadlines, categories, and practical notes; **(2) Registration form** — available only after the cyclist **signs in**; **(3) Payment** — includes review of the **waiver** and **race rules** and checkout through **PayMongo** (the payment provider handles card data; the app does not store card numbers); **(4) Confirmation** — a thank-you / success screen after payment. If the cyclist must log in during checkout, the system remembers where to return so the flow can continue. |
+| **Sign in / account** | Cyclists (and admins) use **email and password** through the platform’s authentication service. The system distinguishes **administrators** from regular riders for access control. |
+| **Events, Results, Gallery, About** | These links exist in the header, but each page currently shows a **“page is not created”** placeholder. Full public content for those sections is **not** implemented in this snapshot (see Section 3). |
+| **Page not found** | If someone types a wrong address, they get a clear **404** page with a way back to the home page. |
+
+**Counsel note (high level):** The public side is focused on **marketing**, **limited participant verification**, **registration**, **legal acknowledgments at payment**, and **online payment**. It is not a full “cyclist portal” with a permanent “my registrations” area after login; that remains a planned enhancement (Section 3).
+
+---
+
+### 2.2 Administration console — for authorized event staff
+
+**Audience:** Only users whose account role is **administrator**. Anyone else who tries to open these pages is returned to the public site. All modules below are **implemented** as operational screens in this codebase.
+
+| Module | What staff can use it for |
+|--------|---------------------------|
+| **Dashboard** | One place to see how registration and payments are going: counts, revenue-style summaries, charts (such as registrations over time, revenue, participation, and categories), recent sign-ups, upcoming events, and a preview of announcements—connected to live data where the backend has records. |
+| **Events management** | Create and edit races, publish what should appear to the public on the registration side, set venues and map links, prizes and organizer contact details, race types, disciplines, categories, capacity limits, and visual assets such as posters or banners. |
+| **Registrations** | Browse and work through the list of sign-ups with filtering, sorting, and search; open a **single registration** to review or adjust details and run supported operations (for example updates from the server, and bib-related steps where configured). Export-style workflows are available where the screen provides them. |
+| **Online payments** | Monitor and work with **PayMongo** transactions: see payment status and use verification-oriented workflows suited to finance and operations review. |
+| **QR code — race kit** | Use a device camera to **scan rider QR codes** so staff can validate identity and support **race kit claiming** at distribution. |
+| **QR code — check-in** | Same scanning technology, oriented to **venue entry / check-in** on race day (separate menu entry for a distinct operational use). |
+| **Results management** | Maintain a **results ledger**: upload or manage timing and ranking data, see publication status, and review rows such as bib, ranks, chip or gun times, and status fields—so results can be prepared before any future public results page goes live. |
+| **Announcements** | Create and manage **pinned notices** and other race communications visible in the operational context (and surfaced on the dashboard where wired). |
+| **Gallery** | Manage **photos and albums** for the event (content intended to support a future public gallery page). |
+| **Cyclists management** | View and manage **cyclist profiles**, teams, and certain account-related actions from an organizer perspective. |
+| **Reports** | Generate **exports** and **summary analytics** for reporting needs. |
+| **Settings** | Configure **branding**, **payments**, **email**, **administrator accounts**, and related operational settings. |
+| **Email notifications** | Work with **email templates** and concepts for **automated messages** to riders (implementation depth should be confirmed against your production email provider and policies). |
+| **Rider dashboard (preview)** | An **internal preview** of what a future **logged-in rider dashboard** might show; it is **not** the live experience for cyclists on the public site today. |
+| **Digital waiver** | Configure and review settings around **digital consent** and waiver content aligned with the registration flow. |
+| **System logs** | Inspect **technical and webhook-related logs** (for example payment pipeline events) to support troubleshooting and audit-style review—subject to what your deployment retains and for how long. |
+
+**Developers:** The canonical list of URLs is in `src/routes/AppRoutes.tsx`.
+
+---
 
 ### 2.3 Backend (Supabase Edge Functions)
 
@@ -195,6 +208,6 @@ This project is developed for the **Hari ng Ahon / All Out Multisports** web ini
 | Field | Value |
 |-------|--------|
 | Repository | `hari-ng-ahon` |
-| Intended use | Client and legal stakeholder summary of **implemented** vs **planned** functionality |
+| Intended use | Client and **legal counsel** summary: plain-language **public vs admin features** (Section 2), plus **implemented** vs **planned** scope elsewhere |
 
 For technical questions beyond this document, refer to `src/routes/AppRoutes.tsx` (source of truth for routes) and `supabase/functions/` (source of truth for server entry points).
