@@ -1,6 +1,7 @@
 // @ts-nocheck
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { assignBibIfMissing } from '../_shared/registration-finale.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -71,15 +72,33 @@ Deno.serve(async (req) => {
     }
   }
 
+  const { data: existingReg, error: existingErr } = await supabase
+    .from('registration_forms')
+    .select('race_category_id, bib_number, status')
+    .eq('id', registrationId)
+    .maybeSingle()
+  if (existingErr) return jsonResponse({ error: existingErr.message }, 500)
+
+  const prevCat = String(existingReg?.race_category_id ?? '').trim()
+  const nextCat = String(raceCategoryId ?? '').trim()
+  const categoryChanged = prevCat !== nextCat
+  const hadBib = Boolean(String(existingReg?.bib_number ?? '').trim())
+  const isConfirmed = String(existingReg?.status ?? '').toLowerCase() === 'confirmed'
+  /** Paid/confirmed rider switched race category: drop old bib so the next assignment uses the new class prefix. */
+  const reassignBibAfterCategoryChange = categoryChanged && hadBib && isConfirmed && Boolean(nextCat)
+
+  const regPatch = {
+    registrant_email: String(patch?.registrantEmail ?? '').trim() || null,
+    entry_event_type_slug: String(patch?.entryEventTypeSlug ?? '').trim() || null,
+    entry_event_type_label: String(patch?.entryEventTypeLabel ?? '').trim() || null,
+    race_category_id: raceCategoryId,
+    updated_at: now,
+    ...(reassignBibAfterCategoryChange ? { bib_number: null } : {}),
+  }
+
   const { data: regUpdated, error: regErr } = await supabase
     .from('registration_forms')
-    .update({
-      registrant_email: String(patch?.registrantEmail ?? '').trim() || null,
-      entry_event_type_slug: String(patch?.entryEventTypeSlug ?? '').trim() || null,
-      entry_event_type_label: String(patch?.entryEventTypeLabel ?? '').trim() || null,
-      race_category_id: raceCategoryId,
-      updated_at: now,
-    })
+    .update(regPatch)
     .eq('id', registrationId)
     .select('id')
 
@@ -124,6 +143,25 @@ Deno.serve(async (req) => {
       .select('id')
     if (payErr) return jsonResponse({ error: payErr.message }, 500)
     if (!payUpdated?.length) return jsonResponse({ error: 'Payment order not updated.' }, 400)
+  }
+
+  if (reassignBibAfterCategoryChange) {
+    try {
+      await assignBibIfMissing(supabase, registrationId)
+    } catch (e) {
+      const raw = (e as Error).message || 'Could not assign a new bib after category change.'
+      return jsonResponse({ ok: false, error: raw }, 500)
+    }
+    const { data: bibRow } = await supabase
+      .from('registration_forms')
+      .select('bib_number')
+      .eq('id', registrationId)
+      .maybeSingle()
+    return jsonResponse({
+      ok: true,
+      bib_reassigned: true,
+      bib_number: String(bibRow?.bib_number ?? '').trim(),
+    }, 200)
   }
 
   return jsonResponse({ ok: true }, 200)

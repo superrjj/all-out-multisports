@@ -121,7 +121,8 @@ export function AdminRegistrations() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [q, setQ] = useState('')
-  const [raceFilter, setRaceFilter] = useState('all')
+  const [disciplineFilter, setDisciplineFilter] = useState('all')
+  const [entryEventTypeFilter, setEntryEventTypeFilter] = useState('all')
   const [paymentFilter, setPaymentFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [sortBy, setSortBy] = useState<'created_desc' | 'created_asc' | 'cyclist_asc' | 'cyclist_desc'>('created_desc')
@@ -150,7 +151,7 @@ export function AdminRegistrations() {
 
   useEffect(() => {
     if (!actionBanner) return
-    const t = window.setTimeout(() => setActionBanner(null), 1500)
+    const t = window.setTimeout(() => setActionBanner(null), 3000)
     return () => window.clearTimeout(t)
   }, [actionBanner])
 
@@ -419,10 +420,29 @@ export function AdminRegistrations() {
     return () => { void supabase.removeChannel(channel) }
   }, [])
 
-  const raceOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => String(r.race_type ?? '').trim()).filter(Boolean))),
-    [rows],
-  )
+  const disciplineOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of rows) {
+      const d = String(r.discipline ?? '').trim()
+      if (d) set.add(d)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [rows])
+  /** One option per distinct entry type (slug), not the combined `events.race_type` string. */
+  const entryEventTypeOptions = useMemo(() => {
+    const bySlug = new Map<string, string>()
+    for (const r of rows) {
+      const slug = String(r.entry_event_type_slug ?? '').trim().toLowerCase()
+      if (!slug) continue
+      if (bySlug.has(slug)) continue
+      const label =
+        String(r.entry_event_type_label ?? '').trim() || formatEventTypeSlugLabel(slug)
+      bySlug.set(slug, label)
+    }
+    return Array.from(bySlug.entries())
+      .map(([slug, label]) => ({ slug, label }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [rows])
   const categoryOptions = useMemo(
     () => Array.from(new Set(rows.map((r) => String(r.age_category ?? '').trim()).filter(Boolean))),
     [rows],
@@ -473,13 +493,25 @@ export function AdminRegistrations() {
         r.id.toLowerCase().includes(query) ||
         String(r.rider_full_name ?? '').toLowerCase().includes(query) ||
         String(r.registrant_email ?? '').toLowerCase().includes(query) ||
+        String(r.event_title ?? '').toLowerCase().includes(query) ||
         String(r.race_type ?? '').toLowerCase().includes(query) ||
+        String(r.discipline ?? '').toLowerCase().includes(query) ||
         String(r.age_category ?? '').toLowerCase().includes(query) ||
         String(r.payment_status ?? '').toLowerCase().includes(query)
-      const matchesRace = raceFilter === 'all' || String(r.race_type ?? '') === raceFilter
+      const matchesDiscipline =
+        disciplineFilter === 'all' || String(r.discipline ?? '').trim() === disciplineFilter
+      const slugNorm = String(r.entry_event_type_slug ?? '').trim().toLowerCase()
+      const matchesEntryEventType =
+        entryEventTypeFilter === 'all' || slugNorm === entryEventTypeFilter
       const matchesPayment = paymentFilter === 'all' || String(r.payment_status ?? '') === paymentFilter
       const matchesCategory = categoryFilter === 'all' || String(r.age_category ?? '') === categoryFilter
-      return matchesSearch && matchesRace && matchesPayment && matchesCategory
+      return (
+        matchesSearch &&
+        matchesDiscipline &&
+        matchesEntryEventType &&
+        matchesPayment &&
+        matchesCategory
+      )
     })
 
     result = [...result].sort((a, b) => {
@@ -527,7 +559,9 @@ export function AdminRegistrations() {
   }, [currentPage, totalPages])
 
   /* eslint-disable react-hooks/set-state-in-effect -- keep page in sync when filters change or total pages shrink */
-  useEffect(() => { setPage(1) }, [q, raceFilter, paymentFilter, categoryFilter, sortBy])
+  useEffect(() => {
+    setPage(1)
+  }, [q, disciplineFilter, entryEventTypeFilter, paymentFilter, categoryFilter, sortBy])
   useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -793,7 +827,7 @@ export function AdminRegistrations() {
 
         <div className="border-b border-slate-100 px-4 py-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Filters</p>
-          <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(4,minmax(0,1fr))_auto]">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(5,minmax(0,1fr))_auto]">
             <div className="relative w-full">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
@@ -811,19 +845,27 @@ export function AdminRegistrations() {
               <option value="refunded">Refunded</option>
               <option value="unknown">Unknown</option>
             </select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="created_desc">All Registration Status</option>
-              <option value="created_asc">Created (Oldest)</option>
-              <option value="cyclist_asc">Cyclist A-Z</option>
-              <option value="cyclist_desc">Cyclist Z-A</option>
+            <select value={disciplineFilter} onChange={(e) => setDisciplineFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+              <option value="all">All Disciplines</option>
+              {disciplineOptions.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
             </select>
             <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="all">All Categories</option>
               {categoryOptions.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
             </select>
-            <select value={raceFilter} onChange={(e) => setRaceFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+            <select value={entryEventTypeFilter} onChange={(e) => setEntryEventTypeFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
               <option value="all">All Events</option>
-              {raceOptions.map((race) => <option key={race} value={race}>{race}</option>)}
+              {entryEventTypeOptions.map(({ slug, label }) => (
+                <option key={slug} value={slug}>{label}</option>
+              ))}
+            </select>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+              <option value="created_desc">Sort: Newest</option>
+              <option value="created_asc">Sort: Oldest</option>
+              <option value="cyclist_asc">Sort: A-Z</option>
+              <option value="cyclist_desc">Sort: Z-A</option>
             </select>
             <input type="date" className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]" />
           </div>
