@@ -279,31 +279,38 @@ function UploadField({
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files) }}
-          className={`flex h-14 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed px-3 text-center transition-colors ${dragging ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50'}`}
+          className={`relative flex h-24 cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed px-3 text-center transition-colors ${dragging ? 'border-blue-400 bg-blue-50' : displayUrl ? 'border-slate-200 bg-white hover:border-blue-300' : 'border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50'}`}
         >
-          <UploadCloud className="h-4 w-4 text-slate-400" />
-          <div>
-            <p className="text-xs text-slate-600">{title}</p>
-            <p className="text-[10px] text-slate-400">{value ? value.name : subtitle}</p>
-          </div>
+          {displayUrl ? (
+            <>
+              <img
+                src={displayUrl}
+                alt="Preview"
+                className="absolute inset-0 h-full w-full object-contain bg-white"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+              />
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 py-1.5">
+                <p className="min-w-0 truncate text-[10px] text-white/90">{value ? value.name : 'Current image'}</p>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onChange(null) }}
+                  className="rounded-full bg-white/90 p-0.5 text-slate-600 shadow hover:bg-white hover:text-red-600 transition-colors"
+                  aria-label="Remove image"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <UploadCloud className="h-4 w-4 text-slate-400" />
+              <div>
+                <p className="text-xs text-slate-600">{title}</p>
+                <p className="text-[10px] text-slate-400">{value ? value.name : subtitle}</p>
+              </div>
+            </>
+          )}
         </div>
-        {displayUrl && (
-          <div className="relative h-20 w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-            <img
-              src={displayUrl}
-              alt="Preview"
-              className="h-full w-full object-cover"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-            />
-            <button
-              type="button"
-              onClick={() => onChange(null)}
-              className="absolute right-1 top-1 rounded-full bg-white/80 p-0.5 text-slate-500 shadow hover:bg-white hover:text-red-500 transition-colors"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </div>
-        )}
         <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => handleFiles(e.target.files)} />
       </div>
     )
@@ -1633,92 +1640,108 @@ function CreateEventModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <section className="flex h-[90vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl">
+      <section className="flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-100 flex-shrink-0">
-          <h3 className="text-xl font-semibold text-slate-900">Create New Event</h3>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
+        <div className="flex flex-col gap-3 border-b border-slate-100 bg-white px-4 pb-4 pt-5 sm:px-6 flex-shrink-0">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="truncate text-xl font-semibold text-slate-900">
+                {mode === 'edit' ? 'Edit Event' : 'Create New Event'}
+              </h3>
+              <p className="mt-0.5 text-sm text-slate-500">
+                Step {step} of 4 · {STEPS[step - 1]}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              aria-label="Close modal"
+            >
             <X className="h-5 w-5" />
-          </button>
+            </button>
+          </div>
         </div>
 
         {/* Step tabs */}
-        <div className="flex border-b border-slate-100 px-6 gap-1 flex-shrink-0 overflow-x-auto">
+        <div className="flex flex-shrink-0 gap-1 overflow-x-auto border-b border-slate-100 bg-slate-50/60 px-2 py-1.5 sm:px-6">
           {[1, 2, 3, 4].map((s) => <StepTab key={s} step={s} current={step} />)}
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {step === 1 && (
-            <Step1
-              form={form}
-              setForm={setForm}
-              posterFile={posterFile}
-              setPosterFile={setPosterFile}
-              routeMapFile={routeMapFile}
-              setRouteMapFile={setRouteMapFile}
-              currentPosterUrl={
-                persistedMedia.poster_url ??
-                (initialEvent?.poster_url != null ? String(initialEvent.poster_url) : null)
-              }
-              currentRouteMapUrl={
-                persistedMedia.route_map_url ??
-                (initialEvent?.route_map_url != null ? String(initialEvent.route_map_url) : null)
-              }
-              eventTypes={eventTypes}
-              eventTypesLoading={eventTypesLoading}
-              onAddEventType={handleAddEventType}
-              onDeleteEventType={(slug) => { void handleDeleteEventType(slug) }}
-              newEventTypeName={newEventTypeName}
-              setNewEventTypeName={setNewEventTypeName}
-            />
-          )}
-          {step === 2 && (
-            <Step2
-              disciplines={disciplines}
-              setDisciplines={setDisciplines}
-              disciplinesLoading={disciplinesLoading}
-            />
-          )}
-          {step === 3 && (
-            <Step3
-              extra={extra}
-              setExtra={setExtra}
-              organizerLogoFile={organizerLogoFile}
-              setOrganizerLogoFile={setOrganizerLogoFile}
-              currentOrgLogoUrl={
-                persistedMedia.banner_url ??
-                (initialEvent?.banner_url != null ? String(initialEvent.banner_url) : null)
-              }
-            />
-          )}
-          {step === 4 && (
-            <Step4
-              form={form}
-              disciplines={disciplines}
-              extra={extra}
-              posterFile={posterFile}
-              currentPosterUrl={
-                persistedMedia.poster_url ??
-                (initialEvent?.poster_url != null ? String(initialEvent.poster_url) : null)
-              }
-              routeMapFile={routeMapFile}
-              currentRouteMapUrl={
-                persistedMedia.route_map_url ??
-                (initialEvent?.route_map_url != null ? String(initialEvent.route_map_url) : null)
-              }
-              organizerLogoFile={organizerLogoFile}
-              currentOrgLogoUrl={
-                persistedMedia.banner_url ??
-                (initialEvent?.banner_url != null ? String(initialEvent.banner_url) : null)
-              }
-              eventTypes={eventTypes}
-            />
-          )}
+        <div className="flex-1 overflow-y-auto bg-slate-50/40 px-3 py-4 sm:px-6 sm:py-6">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            {step === 1 && (
+              <Step1
+                form={form}
+                setForm={setForm}
+                posterFile={posterFile}
+                setPosterFile={setPosterFile}
+                routeMapFile={routeMapFile}
+                setRouteMapFile={setRouteMapFile}
+                currentPosterUrl={
+                  persistedMedia.poster_url ??
+                  (initialEvent?.poster_url != null ? String(initialEvent.poster_url) : null)
+                }
+                currentRouteMapUrl={
+                  persistedMedia.route_map_url ??
+                  (initialEvent?.route_map_url != null ? String(initialEvent.route_map_url) : null)
+                }
+                eventTypes={eventTypes}
+                eventTypesLoading={eventTypesLoading}
+                onAddEventType={handleAddEventType}
+                onDeleteEventType={(slug) => { void handleDeleteEventType(slug) }}
+                newEventTypeName={newEventTypeName}
+                setNewEventTypeName={setNewEventTypeName}
+              />
+            )}
+            {step === 2 && (
+              <Step2
+                disciplines={disciplines}
+                setDisciplines={setDisciplines}
+                disciplinesLoading={disciplinesLoading}
+              />
+            )}
+            {step === 3 && (
+              <Step3
+                extra={extra}
+                setExtra={setExtra}
+                organizerLogoFile={organizerLogoFile}
+                setOrganizerLogoFile={setOrganizerLogoFile}
+                currentOrgLogoUrl={
+                  persistedMedia.banner_url ??
+                  (initialEvent?.banner_url != null ? String(initialEvent.banner_url) : null)
+                }
+              />
+            )}
+            {step === 4 && (
+              <Step4
+                form={form}
+                disciplines={disciplines}
+                extra={extra}
+                posterFile={posterFile}
+                currentPosterUrl={
+                  persistedMedia.poster_url ??
+                  (initialEvent?.poster_url != null ? String(initialEvent.poster_url) : null)
+                }
+                routeMapFile={routeMapFile}
+                currentRouteMapUrl={
+                  persistedMedia.route_map_url ??
+                  (initialEvent?.route_map_url != null ? String(initialEvent.route_map_url) : null)
+                }
+                organizerLogoFile={organizerLogoFile}
+                currentOrgLogoUrl={
+                  persistedMedia.banner_url ??
+                  (initialEvent?.banner_url != null ? String(initialEvent.banner_url) : null)
+                }
+                eventTypes={eventTypes}
+              />
+            )}
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4 flex-shrink-0">
+        <div className="flex items-center justify-between border-t border-slate-100 bg-white px-4 py-4 sm:px-6 flex-shrink-0">
           <button
             type="button"
             onClick={step === 1 ? onClose : () => setStep((s) => (s - 1) as Step)}
