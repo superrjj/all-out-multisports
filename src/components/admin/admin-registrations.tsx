@@ -39,8 +39,13 @@ function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
   return false
 }
 
+const PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS = 2 * 60 * 60 * 1000
+
 function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
-  return isUnpaidDraftRegistrationRow(r)
+  if (!isUnpaidDraftRegistrationRow(r)) return false
+  const created = r.created_at ? new Date(r.created_at).getTime() : NaN
+  if (!Number.isFinite(created)) return false
+  return Date.now() - created <= PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS
 }
 
 /** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
@@ -1288,8 +1293,8 @@ export function AdminRegistrations() {
                     role="menuitem"
                     title={
                       canManualDeletePendingEntry(portalMenuRow)
-                        ? 'Remove this unpaid checkout (within 10 minutes of creation).'
-                        : 'Older than 10 minutes — it will be removed automatically when the list refreshes.'
+                        ? 'Remove this unpaid checkout (allowed within 2 hours of creation; same window as automatic purge).'
+                        : 'Older than 2 hours — it will be removed automatically when the list refreshes (or use purge).'
                     }
                     disabled={!canManualDeletePendingEntry(portalMenuRow)}
                     onClick={() => openPendingDeleteModal(portalMenuRow)}

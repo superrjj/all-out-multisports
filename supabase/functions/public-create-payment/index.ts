@@ -6,6 +6,9 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const PAYMONGO_SECRET_KEY = Deno.env.get('PAYMONGO_SECRET_KEY')!
 
+/** Same window as admin stale purge: unpaid checkout must restart after this. */
+const PAYABLE_REGISTRATION_MAX_AGE_MS = 2 * 60 * 60 * 1000
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -102,7 +105,7 @@ Deno.serve(async (req) => {
 
   const { data: registration, error: registrationError } = await supabase
     .from('registration_forms')
-    .select('id, registration_fee, status, checkout_bundle_id, user_id')
+    .select('id, registration_fee, status, checkout_bundle_id, user_id, created_at')
     .eq('id', body.registrationId)
     .maybeSingle()
 
@@ -110,6 +113,14 @@ Deno.serve(async (req) => {
   if (!registration) return textResponse('Registration not found', 404)
   if (!['pending_payment', 'payment_processing'].includes(registration.status)) {
     return textResponse('Registration is not payable in current status', 400)
+  }
+
+  const createdMs = registration.created_at ? new Date(String(registration.created_at)).getTime() : 0
+  if (createdMs > 0 && Date.now() - createdMs > PAYABLE_REGISTRATION_MAX_AGE_MS) {
+    return textResponse(
+      'This registration checkout has expired. Please go back and submit a new registration to get a fresh payment link.',
+      400,
+    )
   }
 
   const clientAmount = Number(body.amount ?? 0)
