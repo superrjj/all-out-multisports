@@ -6,6 +6,8 @@ import { useAuth } from '../../hooks/useAuth'
 
 type AuthMode = 'login' | 'signup'
 const AUTH_TIMEOUT_MS = 15000
+/** Seconds before "Resend code" is allowed again (initial send + each resend). */
+const RESEND_COOLDOWN_SEC = 60
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   return await Promise.race([
@@ -14,6 +16,12 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
       window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
     }),
   ])
+}
+
+function formatResendCooldown(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 export function AuthPage() {
@@ -59,6 +67,7 @@ export function AuthPage() {
       setEmailError('')
       setPasswordError('')
       setFullNameError('')
+      setResendCooldown(0)
     }
   }, [modeParam])
 
@@ -132,6 +141,8 @@ export function AuthPage() {
         setPendingVerificationEmail(trimmedEmail)
         setVerificationPhase('otp')
         setVerificationCode('')
+        setOtpError('')
+        setResendCooldown(RESEND_COOLDOWN_SEC)
         toast.success('We sent a verification code to your email. Enter it below to finish signup.')
       }
     } catch (error) {
@@ -141,6 +152,7 @@ export function AuthPage() {
         setVerificationPhase('otp')
         setVerificationCode('')
         setOtpError('')
+        setResendCooldown(RESEND_COOLDOWN_SEC)
         toast.error('Enter the verification code from your email on this screen.')
       } else if (mode === 'signup' && (message.toLowerCase().includes('already registered') || message.toLowerCase().includes('already been registered'))) {
         setEmailError('This email is already registered. Please login instead.')
@@ -169,7 +181,7 @@ export function AuthPage() {
         'Resend verification request timed out. Please try again.',
       )
       toast.success('Verification code resent. Check your inbox.')
-      setResendCooldown(60)
+      setResendCooldown(RESEND_COOLDOWN_SEC)
     } catch (error) {
       const message = (error as Error).message || ''
       if (message.toLowerCase().includes('timed out')) {
@@ -210,6 +222,7 @@ export function AuthPage() {
     setVerificationCode('')
     setOtpError('')
     setPendingVerificationEmail('')
+    setResendCooldown(0)
   }
 
   const otpDigitCount = verificationCode.replace(/\D/g, '').length
@@ -283,7 +296,7 @@ export function AuthPage() {
                 disabled={resending || resendCooldown > 0}
                 className="inline-flex flex-1 items-center justify-center rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {resending ? 'Sending...' : resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+                {resending ? 'Sending...' : resendCooldown > 0 ? `Resend in ${formatResendCooldown(resendCooldown)}` : 'Resend code'}
               </button>
               <button
                 type="button"
@@ -309,6 +322,7 @@ export function AuthPage() {
                   setEmailError('')
                   setPasswordError('')
                   setFullNameError('')
+                  setResendCooldown(0)
                 }}
                 className={`rounded-md px-2.5 py-2 text-sm font-medium transition sm:px-3 ${
                   mode === 'login' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
@@ -328,6 +342,7 @@ export function AuthPage() {
                   setEmailError('')
                   setPasswordError('')
                   setFullNameError('')
+                  setResendCooldown(0)
                 }}
                 className={`rounded-md px-2.5 py-2 text-sm font-medium transition sm:px-3 ${
                   mode === 'signup' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'

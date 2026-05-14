@@ -35,6 +35,7 @@ export function AppUpdateWatcher() {
         toast('New version available', {
           id: TOAST_ID,
           duration: Number.POSITIVE_INFINITY,
+          position: 'top-center',
           description: 'Reload to get the latest fixes and features.',
           action: {
             label: 'Update now',
