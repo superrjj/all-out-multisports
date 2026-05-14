@@ -454,7 +454,7 @@ export const adminApi = {
     return data as { ok?: boolean; error?: string }
   },
 
-  /** Removes abandoned `pending_payment` / `payment_processing` registrations older than 2 hours (service-side rules). */
+  /** Removes abandoned `pending_payment` / `payment_processing` registrations older than 10 minutes (service-side rules). */
   async adminPurgeStalePendingRegistrations() {
     const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
       body: { purgeStaleOnly: true },
