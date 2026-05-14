@@ -59,7 +59,7 @@ export function Hero() {
             <br />
             <span className="text-[#cfae3f]">Lions Head &</span>
             <br />
-            <span className="text-[#cfae3f]">Burham Park</span>
+            <span className="text-[#cfae3f]">Burnham Park</span>
           </h1>
 
           {/* Description */}
