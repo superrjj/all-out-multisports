@@ -795,20 +795,17 @@ export function AuthPage() {
                         required
                         className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-11 text-sm text-slate-900 shadow-inner outline-none transition focus:border-[#cfae3f] focus:ring-2 focus:ring-[#cfae3f]/25"
                       />
+                      {/* ✅ FIX: Added mode guard to each condition so icons show correctly in both login and signup */}
                       <span
                         className="pointer-events-none absolute right-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center"
                         aria-live="polite"
                       >
-                        {emailLooksValid && emailLookup === 'checking' ? (
+                        {mode === 'signup' && emailLooksValid && emailLookup === 'checking' ? (
                           <Loader2 className="h-4 w-4 animate-spin text-slate-400" aria-label="Checking email" />
-                        ) : emailLooksValid && emailLookup === 'available' && mode === 'signup' ? (
+                        ) : mode === 'signup' && emailLooksValid && emailLookup === 'available' ? (
                           <Check className="h-4 w-4 text-emerald-600" aria-label="Email is available" />
-                        ) : emailLooksValid && emailLookup === 'taken' && mode === 'signup' ? (
+                        ) : mode === 'signup' && emailLooksValid && emailLookup === 'taken' ? (
                           <X className="h-4 w-4 text-rose-600" aria-label="Email already in use" />
-                        ) : emailLooksValid && emailLookup === 'taken' && mode === 'login' ? (
-                          <Check className="h-4 w-4 text-emerald-600" aria-label="Account found" />
-                        ) : emailLooksValid && emailLookup === 'available' && mode === 'login' ? (
-                          <X className="h-4 w-4 text-rose-600" aria-label="No account for this email" />
                         ) : null}
                       </span>
                     </div>

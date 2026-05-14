@@ -241,7 +241,7 @@ export function AdminRegistrationDetail() {
               <DetailRow icon={<Phone className="h-4 w-4" aria-hidden />} label="Contact">
                 {String(rider?.contact_number ?? '—')}
               </DetailRow>
-              <DetailRow icon={<User2 className="h-4 w-4" aria-hidden />} label="Emergency contact">
+              <DetailRow icon={<User2 className="h-4 w-4" aria-hidden />} label="Emergency contact name">
                 {String(rider?.emergency_contact_name ?? '—')}
               </DetailRow>
               <DetailRow icon={<Phone className="h-4 w-4" aria-hidden />} label="Emergency number">

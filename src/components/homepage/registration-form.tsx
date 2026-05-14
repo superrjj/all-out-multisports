@@ -848,7 +848,7 @@ export function RegistrationForm() {
             onChange={(v) => updateFormField('contactNumber', formatPhilippinePhone(v))}
           />
           <Field
-            label={<>Emergency Contact <span className="text-rose-500">*</span></>}
+            label={<>Emergency Contact Name <span className="text-rose-500">*</span></>}
             value={form.emergencyContactName}
             placeholder="Full name"
             error={fieldErrors.emergencyContactName}
