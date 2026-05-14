@@ -9,7 +9,13 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <App />
-      <Toaster richColors position="top-right" />
+      <Toaster
+        richColors
+        position="top-center"
+        offset="max(12px, env(safe-area-inset-top, 0px))"
+        mobileOffset="max(12px, env(safe-area-inset-top, 0px))"
+        toastOptions={{ classNames: { toast: 'max-w-[calc(100vw-1.5rem)]' } }}
+      />
     </BrowserRouter>
   </StrictMode>,
 )
