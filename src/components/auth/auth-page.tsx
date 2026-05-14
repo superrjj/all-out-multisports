@@ -311,7 +311,7 @@ export function AuthPage() {
         } catch {
           /* ignore */
         }
-        toast.success('You are signed in. Welcome back!')
+        toast.success('You’re signed in. Welcome back!')
       } else {
         const { session: newSession } = await withTimeout(
           register(trimmedEmail, password, trimmedFullName),
@@ -328,7 +328,7 @@ export function AuthPage() {
         setVerificationCode('')
         setOtpError('')
         setResendCooldown(RESEND_COOLDOWN_SEC)
-        toast.success('We emailed you an 6-digit code. Enter it below to finish creating your account.')
+        toast.success('We sent a 6-digit code to your email. Enter it below to continue.')
       }
     } catch (error) {
       const message = (error as Error).message || ''
@@ -345,9 +345,9 @@ export function AuthPage() {
       } else if (mode === 'signup' && (message.toLowerCase().includes('already registered') || message.toLowerCase().includes('already been registered'))) {
         setEmailError('That email already has an account. Try logging in instead.')
       } else if (mode === 'login' && message.toLowerCase().includes('invalid login credentials')) {
-        setFormError('That email or password does not match our records. Please try again.')
+        setFormError('Invalid email or password. Please try again.')
       } else if (mode === 'signup' && message.toLowerCase().includes('password should be at least')) {
-        setPasswordError('Use at least 8 characters so your account stays secure.')
+        setPasswordError('Password must be at least 8 characters.')
       } else if (isLikelyTimeoutMessage(message)) {
         setFormError('This is taking longer than usual. Check your connection and try again.')
       } else {
@@ -378,7 +378,7 @@ export function AuthPage() {
           'This is taking longer than usual. Please try again.',
         )
       }
-      toast.success('A fresh code is on its way. Please check your inbox (and spam folder).')
+      toast.success('New code sent. Check your inbox or spam folder.')
       setResendCooldown(RESEND_COOLDOWN_SEC)
     } catch (error) {
       const message = (error as Error).message || ''
@@ -514,7 +514,7 @@ export function AuthPage() {
       subheading = 'Enter the 6-digit code from the password-reset email we sent you.'
     } else {
       heading = 'Verify your email'
-      subheading = 'Enter the 8-digit code from the email we sent you.'
+      subheading = 'Enter the 6-digit code from the email we sent you.'
     }
   } else if (mode === 'login') {
     heading = 'Welcome back'
