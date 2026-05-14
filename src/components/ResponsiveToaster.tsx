@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 
-const MOBILE_MQ = '(max-width: 640px)'
+/** Phones only — tablets/small laptops stay top-right (matches common `sm` cutoff). */
+const MOBILE_MQ = '(max-width: 480px)'
 
-/** Desktop: top-right. Mobile: top-center + safe area (Sonner v2 has no `mobilePosition` prop). */
+/** Desktop / tablet: top-right. Small phones: top-center + safe area. */
 export function ResponsiveToaster() {
-  const [isMobile, setIsMobile] = useState(false)
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(MOBILE_MQ).matches : false,
+  )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof window === 'undefined') return
     const mq = window.matchMedia(MOBILE_MQ)
     const sync = () => setIsMobile(mq.matches)

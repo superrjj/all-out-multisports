@@ -62,3 +62,16 @@ a {
     background-position: -200% 0;
   }
 }
+
+/*
+ * Sonner (<=600px) pins the toaster to both left and right with width:100%, so "top-right"
+ * looks like a full-width strip (centered content). Keep the tray hugging the right edge
+ * from 481px up so laptop/tablet layouts match our top-right intent.
+ */
+@media (min-width: 481px) and (max-width: 600px) {
+  [data-sonner-toaster][data-x-position='right'] {
+    left: auto !important;
+    width: auto !important;
+    max-width: min(420px, calc(100vw - 2rem));
+  }
+}
