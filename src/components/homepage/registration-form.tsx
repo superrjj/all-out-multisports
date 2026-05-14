@@ -588,7 +588,7 @@ export function RegistrationForm() {
           contactNumber: form.contactNumber,
           emergencyContactName: form.emergencyContactName,
           emergencyContactNumber: form.emergencyContactNumber,
-          teamName: form.teamName,
+          teamName: form.teamName || 'N/A',
           discipline: form.discipline,
           ageCategory: primaryCategoryForRider?.category_name ?? '',
           jerseySize: shirtSize,
