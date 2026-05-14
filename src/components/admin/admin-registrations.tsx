@@ -39,7 +39,7 @@ function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
   return false
 }
 
-const PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS = 10 * 60 * 1000
 
 function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
   if (!isUnpaidDraftRegistrationRow(r)) return false
@@ -1293,8 +1293,8 @@ export function AdminRegistrations() {
                     role="menuitem"
                     title={
                       canManualDeletePendingEntry(portalMenuRow)
-                        ? 'Remove this unpaid checkout (allowed within 2 hours of creation; same window as automatic purge).'
-                        : 'Older than 2 hours — it will be removed automatically when the list refreshes (or use purge).'
+                        ? 'Remove this unpaid checkout (allowed within 10 minutes of creation; same window as automatic purge).'
+                        : 'Older than 10 minutes — it will be removed automatically when the list refreshes (or use purge).'
                     }
                     disabled={!canManualDeletePendingEntry(portalMenuRow)}
                     onClick={() => openPendingDeleteModal(portalMenuRow)}
@@ -1329,7 +1329,7 @@ export function AdminRegistrations() {
               <h3 id="delete-reg-title" className="text-sm font-semibold text-slate-900">
                 Delete pending registration?
               </h3>
-              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 2 hours can be removed.</p>
+              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 10 minutes can be removed.</p>
             </div>
             <div className="space-y-2 px-4 py-3 text-sm text-slate-800">
               <p>

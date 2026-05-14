@@ -7,7 +7,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const PAYMONGO_SECRET_KEY = Deno.env.get('PAYMONGO_SECRET_KEY')!
 
 /** Same window as admin stale purge: unpaid checkout must restart after this. */
-const PAYABLE_REGISTRATION_MAX_AGE_MS = 2 * 60 * 60 * 1000
+const PAYABLE_REGISTRATION_MAX_AGE_MS = 10 * 60 * 1000
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 const corsHeaders = {
