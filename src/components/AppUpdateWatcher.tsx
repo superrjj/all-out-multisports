@@ -17,7 +17,7 @@ export function AppUpdateWatcher() {
     if (!embedded || embedded === 'local') return
 
     let cancelled = false
-    let intervalId: number | undefined
+    const pollTimer = { id: undefined as number | undefined }
 
     const poll = async () => {
       if (cancelled || shownRef.current) return
@@ -32,19 +32,21 @@ export function AppUpdateWatcher() {
         if (!remote || remote === embedded || cancelled) return
         if (shownRef.current) return
         shownRef.current = true
-        toast('New version available', {
+        toast('Update available', {
           id: TOAST_ID,
           duration: Number.POSITIVE_INFINITY,
-          position: 'top-center',
-          description: 'Reload to get the latest fixes and features.',
+          description: 'Refresh this page to load the latest version with fixes and improvements.',
           action: {
-            label: 'Update now',
+            label: 'Refresh now',
             onClick: () => {
               window.location.reload()
             },
           },
         })
-        if (intervalId !== undefined) window.clearInterval(intervalId)
+        if (pollTimer.id !== undefined) {
+          window.clearInterval(pollTimer.id)
+          pollTimer.id = undefined
+        }
       } catch {
         /* ignore network / parse errors */
       }
@@ -55,12 +57,12 @@ export function AppUpdateWatcher() {
     }
 
     void poll()
-    intervalId = window.setInterval(poll, POLL_MS)
+    pollTimer.id = window.setInterval(poll, POLL_MS)
     document.addEventListener('visibilitychange', onVisible)
 
     return () => {
       cancelled = true
-      if (intervalId !== undefined) window.clearInterval(intervalId)
+      if (pollTimer.id !== undefined) window.clearInterval(pollTimer.id)
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])

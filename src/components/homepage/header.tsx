@@ -19,10 +19,10 @@ export function Header() {
   const onLogout = async () => {
     try {
       await logout()
-      toast.success('Logged out successfully.')
+      toast.success('You have been signed out.')
       setMobileOpen(false)
-    } catch (error) {
-      toast.error((error as Error).message || 'Failed to logout.')
+    } catch {
+      toast.error('We could not sign you out. Please try again in a moment.')
     }
   }
 
