@@ -1,6 +1,7 @@
 // @ts-nocheck
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { expirePaymongoSessionsForRegistrationRelatedOrders } from '../_shared/paymongo-checkout-expire.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -97,6 +98,8 @@ function isDeletableUnpaidDraft(payment_status: string, regStatus: string): bool
 }
 
 async function deleteRegistrationCascade(registrationId: string): Promise<void> {
+  await expirePaymongoSessionsForRegistrationRelatedOrders(supabase, registrationId)
+
   const { data: orders, error: oErr } = await supabase.from('payment_orders').select('id').eq('registration_id', registrationId)
   if (oErr) throw new Error(oErr.message)
   const orderIds = (orders ?? []).map((o) => o.id).filter(Boolean)
@@ -135,7 +138,7 @@ Deno.serve(async (req) => {
   const now = Date.now()
   const cutoff = new Date(now - STALE_MS).toISOString()
 
-  /** Purge abandoned checkout rows older than 10 minutes (registration still in draft payment states). */
+  /** Purge abandoned checkout rows older than 2 hours (registration still in draft payment states). */
   if (body.purgeStaleOnly === true) {
     const { data: candidates, error: cErr } = await supabase
       .from('registration_forms')

@@ -145,7 +145,25 @@ Deno.serve(async (req: Request) => {
     .maybeSingle()
 
   if (orderError || !order) {
+    await supabase
+      .from('payment_webhook_events')
+      .update({ processed: true, processed_at: new Date().toISOString() })
+      .eq('provider_event_id', providerEventId)
     return new Response('Payment order not found for merchant reference', { status: 404 })
+  }
+
+  const { data: regRow, error: regErr } = await supabase
+    .from('registration_forms')
+    .select('id')
+    .eq('id', order.registration_id)
+    .maybeSingle()
+  if (regErr || !regRow?.id) {
+    await supabase
+      .from('payment_webhook_events')
+      .update({ processed: true, processed_at: new Date().toISOString() })
+      .eq('provider_event_id', providerEventId)
+    // DB row was removed (e.g. stale purge) but PayMongo may still deliver a late event — do not attach money to a ghost id.
+    return new Response('Registration not found for payment order', { status: 404 })
   }
 
   const normalizedStatus = normalizeStatus(paymentAttrs?.status)
