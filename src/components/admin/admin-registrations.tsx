@@ -28,6 +28,14 @@ function pill(status: string) {
   return 'bg-slate-100 text-slate-700'
 }
 
+/** Matches `registration-payment-success` / `index.css` @keyframes cert-preview-shimmer */
+const SHIMMER =
+  'bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:200%_100%] animate-[cert-preview-shimmer_1.4s_ease-in-out_infinite]'
+
+function ShimmerLine({ className }: { className: string }) {
+  return <div className={`${SHIMMER} ${className}`} />
+}
+
 
 /** Matches server rules for manual delete / stale purge (unpaid checkout only). */
 function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
@@ -84,20 +92,41 @@ function isTableDragScrollInteractiveTarget(target: EventTarget | null): boolean
 
 function SkeletonRow() {
   return (
-    <tr className="animate-pulse">
+    <tr>
       <td className="py-3 pl-4 pr-3">
-        <div className="h-3 w-32 rounded bg-slate-200 mb-1.5" />
-        <div className="h-2.5 w-44 rounded bg-slate-100" />
+        <ShimmerLine className="mb-1.5 h-3 w-32 rounded" />
+        <ShimmerLine className="h-2.5 w-44 rounded" />
       </td>
-      <td className="py-3 pr-3"><div className="h-3 w-36 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-3 w-20 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-3 w-24 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-3 w-24 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-3"><div className="h-3 w-10 rounded bg-slate-200" /></td>
-      <td className="py-3 pr-4 text-right"><div className="ml-auto h-6 w-12 rounded-md bg-slate-200" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-36 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-20 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-20 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-24 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-5 w-16 rounded-full" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-24 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-3 w-10 rounded" /></td>
+      <td className="py-3 pr-4 text-right"><ShimmerLine className="ml-auto h-6 w-12 rounded-md" /></td>
     </tr>
+  )
+}
+
+function LedgerSkeletonRow() {
+  return (
+    <tr>
+      <td className="px-3 py-2"><ShimmerLine className="h-3 w-24 rounded" /></td>
+      <td className="px-3 py-2"><ShimmerLine className="h-3 w-28 rounded" /></td>
+      <td className="px-3 py-2"><ShimmerLine className="h-3 w-32 rounded" /></td>
+      <td className="px-3 py-2"><ShimmerLine className="h-6 w-12 rounded-md" /></td>
+    </tr>
+  )
+}
+
+function RegistrationsFiltersSkeleton() {
+  return (
+    <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(5,minmax(0,1fr))_auto]">
+      {Array.from({ length: 7 }).map((_, i) => (
+        <ShimmerLine key={i} className="h-10 w-full rounded-md" />
+      ))}
+    </div>
   )
 }
 
@@ -812,85 +841,108 @@ export function AdminRegistrations() {
 
   return (
     <div className="space-y-4">
-      <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-900">Registrations</h2>
-            <p className="text-sm text-slate-500">Manage and monitor all event registrations</p>
+            {loading ? (
+              <div className="space-y-2" aria-hidden>
+                <ShimmerLine className="h-8 w-52 max-w-full rounded-md" />
+                <ShimmerLine className="h-4 w-72 max-w-full rounded-md" />
+              </div>
+            ) : (
+              <>
+                <h2 className="text-2xl font-semibold text-slate-900">Registrations</h2>
+                <p className="text-sm text-slate-500">Manage and monitor all event registrations</p>
+              </>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setImportOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <Users className="h-3.5 w-3.5" />
-              Import Participants
-            </button>
-            <button
-              type="button"
-              onClick={() => { void handlePrintRaceBibs() }}
-              disabled={printLoading}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-              {printLoading ? 'Preparing PDF…' : 'Print Race Bibs'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLedgerOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <ClipboardList className="h-3.5 w-3.5" />
-              View Legend
-            </button>
+            {loading ? (
+              <div className="flex flex-wrap items-center gap-2" aria-hidden>
+                <ShimmerLine className="h-9 w-[9.5rem] rounded-lg" />
+                <ShimmerLine className="h-9 w-[8.5rem] rounded-lg" />
+                <ShimmerLine className="h-9 w-[7.5rem] rounded-lg" />
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Import Participants
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void handlePrintRaceBibs() }}
+                  disabled={printLoading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {printLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                  {printLoading ? 'Preparing PDF…' : 'Print Race Bibs'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLedgerOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  View Legend
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="border-b border-slate-100 px-4 py-3">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Filters</p>
-          <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(5,minmax(0,1fr))_auto]">
-            <div className="relative w-full">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search registrations..."
-                className="h-10 w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
-              />
+          {loading ? (
+            <RegistrationsFiltersSkeleton />
+          ) : (
+            <div className="grid min-w-0 gap-2 sm:grid-cols-2 md:grid-cols-[1.3fr_repeat(5,minmax(0,1fr))_auto]">
+              <div className="relative w-full">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search registrations..."
+                  className="h-10 w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]"
+                />
+              </div>
+              <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+                <option value="all">All Payment Status</option>
+                <option value="paid">Paid</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+                <option value="refunded">Refunded</option>
+                <option value="unknown">Unknown</option>
+              </select>
+              <select value={disciplineFilter} onChange={(e) => setDisciplineFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+                <option value="all">All Disciplines</option>
+                {disciplineOptions.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+                <option value="all">All Categories</option>
+                {categoryOptions.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+              </select>
+              <select value={entryEventTypeFilter} onChange={(e) => setEntryEventTypeFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+                <option value="all">All Events</option>
+                {entryEventTypeOptions.map(({ slug, label }) => (
+                  <option key={slug} value={slug}>{label}</option>
+                ))}
+              </select>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
+                <option value="created_desc">Sort: Newest</option>
+                <option value="created_asc">Sort: Oldest</option>
+                <option value="cyclist_asc">Sort: A-Z</option>
+                <option value="cyclist_desc">Sort: Z-A</option>
+              </select>
+              <input type="date" className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]" />
             </div>
-            <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="all">All Payment Status</option>
-              <option value="paid">Paid</option>
-              <option value="pending">Pending</option>
-              <option value="failed">Failed</option>
-              <option value="refunded">Refunded</option>
-              <option value="unknown">Unknown</option>
-            </select>
-            <select value={disciplineFilter} onChange={(e) => setDisciplineFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="all">All Disciplines</option>
-              {disciplineOptions.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="all">All Categories</option>
-              {categoryOptions.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
-            <select value={entryEventTypeFilter} onChange={(e) => setEntryEventTypeFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="all">All Events</option>
-              {entryEventTypeOptions.map(({ slug, label }) => (
-                <option key={slug} value={slug}>{label}</option>
-              ))}
-            </select>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
-              <option value="created_desc">Sort: Newest</option>
-              <option value="created_asc">Sort: Oldest</option>
-              <option value="cyclist_asc">Sort: A-Z</option>
-              <option value="cyclist_desc">Sort: Z-A</option>
-            </select>
-            <input type="date" className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]" />
-          </div>
+          )}
         </div>
 
         <div className="grid gap-3 border-b border-slate-100 px-4 py-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1120,21 +1172,36 @@ export function AdminRegistrations() {
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-          <p className="min-w-0 text-center sm:text-left">Showing {showingFrom} to {showingTo} of {filtered.length} registrations</p>
-          <div className="flex flex-wrap items-center justify-center gap-1 sm:justify-end">
-            <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === 1}>‹</button>
-            {pageNumbers.map((pageNumber) => (
-              <button
-                key={pageNumber}
-                type="button"
-                onClick={() => setPage(pageNumber)}
-                className={`inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md px-2.5 py-1 text-sm sm:min-h-0 sm:min-w-0 sm:text-xs ${pageNumber === currentPage ? 'bg-[#0f5ea8] font-semibold text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-              >
-                {pageNumber}
-              </button>
-            ))}
-            <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === totalPages}>›</button>
-          </div>
+          {loading ? (
+            <>
+              <ShimmerLine className="mx-auto h-4 w-56 max-w-full rounded-md sm:mx-0" aria-hidden />
+              <div className="flex flex-wrap items-center justify-center gap-1 sm:justify-end" aria-hidden>
+                <ShimmerLine className="h-9 w-9 rounded-md" />
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <ShimmerLine key={i} className="h-9 w-9 rounded-md" />
+                ))}
+                <ShimmerLine className="h-9 w-9 rounded-md" />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="min-w-0 text-center sm:text-left">Showing {showingFrom} to {showingTo} of {filtered.length} registrations</p>
+              <div className="flex flex-wrap items-center justify-center gap-1 sm:justify-end">
+                <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === 1}>‹</button>
+                {pageNumbers.map((pageNumber) => (
+                  <button
+                    key={pageNumber}
+                    type="button"
+                    onClick={() => setPage(pageNumber)}
+                    className={`inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md px-2.5 py-1 text-sm sm:min-h-0 sm:min-w-0 sm:text-xs ${pageNumber === currentPage ? 'bg-[#0f5ea8] font-semibold text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    {pageNumber}
+                  </button>
+                ))}
+                <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:text-slate-400 sm:min-h-0 sm:min-w-0" disabled={currentPage === totalPages}>›</button>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -1173,7 +1240,7 @@ export function AdminRegistrations() {
               </button>
             </div>
 
-            <div className="border-b border-slate-100 px-4 py-3">
+            <div className={`border-b border-slate-100 px-4 py-3 ${ledgerLoading ? 'pointer-events-none opacity-60' : ''}`}>
               <div className="grid gap-2 sm:grid-cols-3">
                 <select
                   value={ledgerEventId}
@@ -1202,8 +1269,26 @@ export function AdminRegistrations() {
               </div>
             </div>
 
-            <div className="max-h-[55vh] overflow-auto p-4">
-              {ledgerLoading ? <p className="text-sm text-slate-500">Loading legend…</p> : null}
+            <div className="max-h-[55vh] overflow-auto p-4" aria-busy={ledgerLoading}>
+              {ledgerLoading ? (
+                <div className="space-y-3" aria-hidden>
+                  <table className="min-w-full divide-y divide-slate-200 text-xs sm:text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Discipline</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Category</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Event Type</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Bib Code</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <LedgerSkeletonRow key={i} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
               {!ledgerLoading && ledgerError ? <p className="text-sm text-rose-600">{ledgerError}</p> : null}
               {!ledgerLoading && !ledgerError && ledgerRows.length === 0 ? (
                 <p className="text-sm text-slate-500">No legend entries found for this filter.</p>
@@ -1393,16 +1478,25 @@ function StatCard({
     : 'bg-violet-50 text-violet-600'
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[11px] text-slate-500">{label}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           {loading ? (
-            <div className="mt-1 h-7 w-10 animate-pulse rounded bg-slate-200" />
+            <div className="space-y-2" aria-hidden>
+              <ShimmerLine className="h-3 w-28 max-w-full rounded" />
+              <ShimmerLine className="h-8 w-14 max-w-full rounded-md" />
+            </div>
           ) : (
-            <p className="text-2xl font-semibold text-slate-900">{value}</p>
+            <>
+              <p className="text-[11px] text-slate-500">{label}</p>
+              <p className="text-2xl font-semibold text-slate-900">{value}</p>
+            </>
           )}
         </div>
-        <span className={`rounded-md p-2 ${iconClass}`}>{icon}</span>
+        {loading ? (
+          <ShimmerLine className="h-9 w-9 shrink-0 rounded-md" aria-hidden />
+        ) : (
+          <span className={`rounded-md p-2 ${iconClass}`}>{icon}</span>
+        )}
       </div>
     </div>
   )
