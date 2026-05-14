@@ -19,6 +19,10 @@ interface AuthContextValue {
   register: (email: string, password: string, fullName: string) => Promise<{ session: Session | null }>
   verifySignupOtp: (email: string, token: string) => Promise<void>
   resendConfirmation: (email: string) => Promise<void>
+  /** Sends password-reset instructions (configure Supabase “Reset password” email to highlight the numeric code). */
+  requestPasswordRecovery: (email: string) => Promise<void>
+  verifyRecoveryOtp: (email: string, token: string) => Promise<void>
+  updatePassword: (newPassword: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -111,11 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       verifySignupOtp: async (email, token) => {
         const clean = String(token ?? '').replace(/\D/g, '')
-        if (clean.length < 6) {
-          throw new Error('Enter the full verification code from your email.')
-        }
-        if (clean.length > 12) {
-          throw new Error('That code looks too long. Paste only the numbers from the email (up to 12 digits).')
+        if (clean.length !== 8) {
+          throw new Error('Please enter all 8 digits from the email we sent you.')
         }
         const { error } = await supabase.auth.verifyOtp({
           email: email.trim().toLowerCase(),
@@ -129,6 +130,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           type: 'signup',
           email,
         })
+        if (error) throw error
+      },
+      requestPasswordRecovery: async (email) => {
+        const origin = typeof window !== 'undefined' ? window.location.origin : ''
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+          redirectTo: `${origin}/auth?mode=login`,
+        })
+        if (error) throw error
+      },
+      verifyRecoveryOtp: async (email, token) => {
+        const clean = String(token ?? '').replace(/\D/g, '')
+        if (clean.length !== 8) {
+          throw new Error('Please enter all 8 digits from the password-reset email.')
+        }
+        const { error } = await supabase.auth.verifyOtp({
+          email: email.trim().toLowerCase(),
+          token: clean,
+          type: 'recovery',
+        })
+        if (error) throw error
+      },
+      updatePassword: async (newPassword) => {
+        const { error } = await supabase.auth.updateUser({ password: newPassword })
         if (error) throw error
       },
       logout: async () => {

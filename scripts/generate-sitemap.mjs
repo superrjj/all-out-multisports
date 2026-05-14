@@ -44,6 +44,8 @@ async function generateSitemap() {
     urlEntry(`${siteUrl}/home`, '0.9', 'weekly', now),
     urlEntry(`${siteUrl}/register/info`, '0.9', 'daily', now),
     urlEntry(`${siteUrl}/auth`, '0.5', 'monthly', now),
+    urlEntry(`${siteUrl}/terms`, '0.3', 'yearly', now),
+    urlEntry(`${siteUrl}/privacy`, '0.3', 'yearly', now),
   ]
 
   const events = await fetchPublishedEvents()

@@ -29,6 +29,8 @@ import { RegistrationInfo } from '../components/homepage/registration-info'
 import { RegistrationPayment } from '../components/homepage/registration-payment'
 import { RegistrationPaymentSuccess } from '../components/homepage/registration-payment-success'
 import { Shell } from '../components/Shell'
+import { PrivacyPolicyPage } from '../components/legal/privacy-policy-page'
+import { TermsOfServicePage } from '../components/legal/terms-of-service-page'
 import { useAuth } from '../hooks/useAuth'
 
 function RouteLoadingState() {
@@ -201,11 +203,13 @@ export function AppRoutes() {
           </PublicOnly>
         }
       />
-      <Route path="/auth" element={<Shell><AuthPage /></Shell>} />
+      <Route path="/auth" element={<AuthPage />} />
       <Route path="/events" element={<Shell><PageNotCreated pageName="Events" /></Shell>} />
       <Route path="/results" element={<Shell><PageNotCreated pageName="Results" /></Shell>} />
       <Route path="/gallery" element={<Shell><PageNotCreated pageName="Gallery" /></Shell>} />
       <Route path="/about" element={<Shell><PageNotCreated pageName="About" /></Shell>} />
+      <Route path="/terms" element={<Shell><TermsOfServicePage /></Shell>} />
+      <Route path="/privacy" element={<Shell><PrivacyPolicyPage /></Shell>} />
       <Route
         path="/register/info"
         element={
