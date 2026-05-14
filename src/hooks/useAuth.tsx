@@ -15,7 +15,9 @@ interface AuthContextValue {
   loading: boolean
   roleLoading: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, fullName: string) => Promise<void>
+  /** Returns `session` when email is already confirmed / no OTP step; otherwise `null` and user must `verifySignupOtp`. */
+  register: (email: string, password: string, fullName: string) => Promise<{ session: Session | null }>
+  verifySignupOtp: (email: string, token: string) => Promise<void>
   resendConfirmation: (email: string) => Promise<void>
   logout: () => Promise<void>
 }
@@ -97,12 +99,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
       register: async (email, password, fullName) => {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { full_name: fullName, role: 'cyclist' },
           },
+        })
+        if (error) throw error
+        return { session: data.session ?? null }
+      },
+      verifySignupOtp: async (email, token) => {
+        const clean = String(token ?? '').replace(/\D/g, '')
+        if (clean.length < 6) {
+          throw new Error('Enter the full verification code from your email.')
+        }
+        if (clean.length > 12) {
+          throw new Error('That code looks too long. Paste only the numbers from the email (up to 12 digits).')
+        }
+        const { error } = await supabase.auth.verifyOtp({
+          email: email.trim().toLowerCase(),
+          token: clean,
+          type: 'signup',
         })
         if (error) throw error
       },
