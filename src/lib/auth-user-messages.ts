@@ -36,7 +36,7 @@ export function mapAuthError(error: unknown): string {
   if (t.includes('fetch') || t.includes('network') || t.includes('failed to fetch')) {
     return 'We could not reach the server. Check your internet connection and try again.'
   }
-  if (t.includes('8-digit')) {
+  if (t.includes('6-digit') || t.includes('8-digit')) {
     return raw
   }
 
