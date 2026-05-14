@@ -115,8 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       verifySignupOtp: async (email, token) => {
         const clean = String(token ?? '').replace(/\D/g, '')
-        if (clean.length !== 8) {
-          throw new Error('Please enter all 8 digits from the email we sent you.')
+        if (clean.length !== 6) {
+          throw new Error('Please enter all 6 digits from the email we sent you.')
         }
         const { error } = await supabase.auth.verifyOtp({
           email: email.trim().toLowerCase(),
@@ -141,8 +141,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       verifyRecoveryOtp: async (email, token) => {
         const clean = String(token ?? '').replace(/\D/g, '')
-        if (clean.length !== 8) {
-          throw new Error('Please enter all 8 digits from the password-reset email.')
+        if (clean.length !== 6) {
+          throw new Error('Please enter all 6 digits from the password-reset email.')
         }
         const { error } = await supabase.auth.verifyOtp({
           email: email.trim().toLowerCase(),

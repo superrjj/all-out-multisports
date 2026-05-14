@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Lock, Mail, User, UserPlus } from 'lucide-react'
+import { Check, Eye, EyeOff, Loader2, Lock, Mail, User, UserPlus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '../../hooks/useAuth'
 import { isLikelyTimeoutMessage, mapAuthError } from '../../lib/auth-user-messages'
+import { fetchEmailRegisteredStatus, isPlausibleEmail } from '../../services/authEmailLookup'
 
 type AuthMode = 'login' | 'signup'
 type VerificationPhase = 'none' | 'otp' | 'new_password'
@@ -12,8 +13,11 @@ type OtpContext = 'signup' | 'recovery' | null
 
 const AUTH_TIMEOUT_MS = 15000
 const RESEND_COOLDOWN_SEC = 60
-const OTP_CODE_LENGTH = 8
+const EMAIL_LOOKUP_DEBOUNCE_MS = 450
+const OTP_CODE_LENGTH = 6
 const REMEMBER_EMAIL_KEY = 'hna_auth_remember_email'
+
+type EmailFieldStatus = 'idle' | 'checking' | 'taken' | 'available' | 'unknown'
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   return await Promise.race([
@@ -83,6 +87,12 @@ export function AuthPage() {
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [resetPwSubmitting, setResetPwSubmitting] = useState(false)
   const [resetPwError, setResetPwError] = useState('')
+  const [emailLookup, setEmailLookup] = useState<EmailFieldStatus>('idle')
+
+  const emailLookupGenRef = useRef(0)
+  const forgotInFlightRef = useRef(false)
+  const resendInFlightRef = useRef(false)
+  const otpVerifyInFlightRef = useRef(false)
 
   const redirectParam = useMemo(() => {
     const params = new URLSearchParams(location.search)
@@ -122,6 +132,7 @@ export function AuthPage() {
       setNewPassword(r.newPassword)
       setConfirmNewPassword(r.confirmNewPassword)
       setResetPwError(r.resetPwError)
+      setEmailLookup('idle')
     }
   }, [modeParam])
 
@@ -138,6 +149,28 @@ export function AuthPage() {
       void navigate(next, { replace: true })
     }
   }, [awaitingNewPassword, loading, navigate, redirectParam, role, roleLoading, session])
+
+  useEffect(() => {
+    const trimmed = email.trim().toLowerCase()
+    if (!isPlausibleEmail(trimmed)) {
+      setEmailLookup('idle')
+      return
+    }
+
+    const requestId = ++emailLookupGenRef.current
+    setEmailLookup('checking')
+    const timer = window.setTimeout(() => {
+      void fetchEmailRegisteredStatus(trimmed).then((status) => {
+        if (emailLookupGenRef.current !== requestId) return
+        setEmailLookup(status)
+      })
+    }, EMAIL_LOOKUP_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+      emailLookupGenRef.current += 1
+    }
+  }, [email])
 
   useEffect(() => {
     if (resendCooldown <= 0) return
@@ -165,6 +198,7 @@ export function AuthPage() {
     setNewPassword(r.newPassword)
     setConfirmNewPassword(r.confirmNewPassword)
     setResetPwError(r.resetPwError)
+    setEmailLookup('idle')
   }
 
   const onForgotPassword = async () => {
@@ -173,6 +207,20 @@ export function AuthPage() {
       toast.error('Please enter the email you used when you signed up.')
       return
     }
+    if (!isPlausibleEmail(trimmed)) {
+      toast.error('Please enter a valid email address.')
+      return
+    }
+    if (emailLookup === 'checking') {
+      toast.info('Please wait a moment while we check this email.')
+      return
+    }
+    if (emailLookup === 'available') {
+      toast.error('No account uses that email. Create an account or check the spelling.')
+      return
+    }
+    if (forgotInFlightRef.current) return
+    forgotInFlightRef.current = true
     setForgotSending(true)
     try {
       await withTimeout(
@@ -187,12 +235,13 @@ export function AuthPage() {
       setOtpError('')
       setResendCooldown(RESEND_COOLDOWN_SEC)
       toast.success(
-        'If we find an account for that email, we have sent an 8-digit code. Enter it below to choose a new password.',
+        'If we find an account for that email, we have sent an 6-digit code. Enter it below to choose a new password.',
       )
     } catch (e) {
       toast.error(mapAuthError(e))
     } finally {
       setForgotSending(false)
+      forgotInFlightRef.current = false
     }
   }
 
@@ -237,6 +286,16 @@ export function AuthPage() {
         setSubmitting(false)
         return
       }
+      if (emailLookup === 'checking') {
+        setFormError('Please wait until the email check finishes, then try again.')
+        setSubmitting(false)
+        return
+      }
+      if (emailLookup === 'taken') {
+        setEmailError('That email already has an account. Try logging in instead.')
+        setSubmitting(false)
+        return
+      }
     }
 
     try {
@@ -269,7 +328,7 @@ export function AuthPage() {
         setVerificationCode('')
         setOtpError('')
         setResendCooldown(RESEND_COOLDOWN_SEC)
-        toast.success('We emailed you an 8-digit code. Enter it below to finish creating your account.')
+        toast.success('We emailed you an 6-digit code. Enter it below to finish creating your account.')
       }
     } catch (error) {
       const message = (error as Error).message || ''
@@ -281,7 +340,7 @@ export function AuthPage() {
         setOtpError('')
         setResendCooldown(RESEND_COOLDOWN_SEC)
         toast.info('Confirm your email', {
-          description: 'Enter the 8-digit code we sent you to finish signing in.',
+          description: 'Enter the 6-digit code we sent you to finish signing in.',
         })
       } else if (mode === 'signup' && (message.toLowerCase().includes('already registered') || message.toLowerCase().includes('already been registered'))) {
         setEmailError('That email already has an account. Try logging in instead.')
@@ -302,6 +361,8 @@ export function AuthPage() {
   const onResendCode = async () => {
     const target = pendingVerificationEmail || email.trim().toLowerCase()
     if (!target) return
+    if (resendInFlightRef.current) return
+    resendInFlightRef.current = true
     setResending(true)
     try {
       if (otpContext === 'recovery') {
@@ -328,12 +389,15 @@ export function AuthPage() {
       }
     } finally {
       setResending(false)
+      resendInFlightRef.current = false
     }
   }
 
   const onVerifyOtp = async () => {
     const target = pendingVerificationEmail || email.trim().toLowerCase()
     if (!target) return
+    if (otpVerifyInFlightRef.current) return
+    otpVerifyInFlightRef.current = true
     setOtpError('')
     setOtpSubmitting(true)
     try {
@@ -365,6 +429,7 @@ export function AuthPage() {
       setOtpError(mapAuthError(error))
     } finally {
       setOtpSubmitting(false)
+      otpVerifyInFlightRef.current = false
     }
   }
 
@@ -429,6 +494,15 @@ export function AuthPage() {
 
   const resendLabel = resending ? 'Sending…' : resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend code'
 
+  const emailLooksValid = isPlausibleEmail(email)
+  const forgotPasswordDisabled =
+    forgotSending ||
+    (emailLooksValid && emailLookup === 'checking') ||
+    (emailLooksValid && emailLookup === 'available')
+  const signupCreateDisabled =
+    submitting ||
+    (mode === 'signup' && emailLooksValid && (emailLookup === 'checking' || emailLookup === 'taken'))
+
   let heading: string
   let subheading: string
   if (verificationPhase === 'new_password') {
@@ -437,7 +511,7 @@ export function AuthPage() {
   } else if (verificationPhase === 'otp') {
     if (otpContext === 'recovery') {
       heading = 'Reset your password'
-      subheading = 'Enter the 8-digit code from the password-reset email we sent you.'
+      subheading = 'Enter the 6-digit code from the password-reset email we sent you.'
     } else {
       heading = 'Verify your email'
       subheading = 'Enter the 8-digit code from the email we sent you.'
@@ -489,27 +563,68 @@ export function AuthPage() {
                     {pendingVerificationEmail || email.trim() || 'your email'}
                   </span>
                 </p>
+
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-900" htmlFor="otp-code">
+                  <label className="text-sm font-semibold text-slate-900" htmlFor="otp-code-0">
                     {otpContext === 'recovery' ? 'Reset code' : 'Verification code'}
                   </label>
-                  <input
-                    id="otp-code"
-                    value={verificationCode}
-                    onChange={(event) => {
-                      setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, OTP_CODE_LENGTH))
-                      setOtpError('')
-                    }}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    placeholder="00000000"
-                    maxLength={OTP_CODE_LENGTH}
-                    title="Enter the 8-digit code from your email."
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-center font-mono text-lg tracking-[0.35em] text-slate-900 shadow-inner outline-none ring-[#cfae3f]/0 transition focus:border-[#cfae3f] focus:ring-2 focus:ring-[#cfae3f]/30"
-                  />
+                  <div className="flex justify-center gap-2">
+                    {Array.from({ length: OTP_CODE_LENGTH }).map((_, i) => (
+                      <input
+                        key={i}
+                        id={`otp-code-${i}`}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={1}
+                        value={verificationCode[i] ?? ''}
+                        autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                        onChange={(e) => {
+                          const digit = e.target.value.replace(/\D/g, '').slice(-1)
+                          const next = verificationCode.split('')
+                          next[i] = digit
+                          const joined = next.join('').slice(0, OTP_CODE_LENGTH)
+                          setVerificationCode(joined)
+                          setOtpError('')
+                          if (digit && i < OTP_CODE_LENGTH - 1) {
+                            document.getElementById(`otp-code-${i + 1}`)?.focus()
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Backspace') {
+                            if (!verificationCode[i] && i > 0) {
+                              const next = verificationCode.split('')
+                              next[i - 1] = ''
+                              setVerificationCode(next.join(''))
+                              document.getElementById(`otp-code-${i - 1}`)?.focus()
+                            } else {
+                              const next = verificationCode.split('')
+                              next[i] = ''
+                              setVerificationCode(next.join(''))
+                            }
+                            setOtpError('')
+                          } else if (e.key === 'ArrowLeft' && i > 0) {
+                            document.getElementById(`otp-code-${i - 1}`)?.focus()
+                          } else if (e.key === 'ArrowRight' && i < OTP_CODE_LENGTH - 1) {
+                            document.getElementById(`otp-code-${i + 1}`)?.focus()
+                          }
+                        }}
+                        onPaste={(e) => {
+                          e.preventDefault()
+                          const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_CODE_LENGTH)
+                          setVerificationCode(pasted)
+                          setOtpError('')
+                          const nextIndex = Math.min(pasted.length, OTP_CODE_LENGTH - 1)
+                          document.getElementById(`otp-code-${nextIndex}`)?.focus()
+                        }}
+                        onFocus={(e) => e.target.select()}
+                        className="h-12 w-10 rounded-xl border border-slate-200 bg-white text-center font-mono text-lg font-bold text-slate-900 shadow-inner outline-none transition focus:border-[#cfae3f] focus:ring-2 focus:ring-[#cfae3f]/30 sm:h-13 sm:w-11"
+                      />
+                    ))}
+                  </div>
                 </div>
+
                 {otpError ? <p className="text-sm text-rose-600">{otpError}</p> : null}
+
                 <button
                   type="button"
                   onClick={() => void onVerifyOtp()}
@@ -522,6 +637,7 @@ export function AuthPage() {
                       ? 'Continue'
                       : 'Verify and continue'}
                 </button>
+
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
                   <button
                     type="button"
@@ -677,9 +793,30 @@ export function AuthPage() {
                         placeholder="you@gmail.com"
                         autoComplete="email"
                         required
-                        className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-3 text-sm text-slate-900 shadow-inner outline-none transition focus:border-[#cfae3f] focus:ring-2 focus:ring-[#cfae3f]/25"
+                        className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-11 text-sm text-slate-900 shadow-inner outline-none transition focus:border-[#cfae3f] focus:ring-2 focus:ring-[#cfae3f]/25"
                       />
+                      <span
+                        className="pointer-events-none absolute right-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center"
+                        aria-live="polite"
+                      >
+                        {emailLooksValid && emailLookup === 'checking' ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-slate-400" aria-label="Checking email" />
+                        ) : emailLooksValid && emailLookup === 'available' && mode === 'signup' ? (
+                          <Check className="h-4 w-4 text-emerald-600" aria-label="Email is available" />
+                        ) : emailLooksValid && emailLookup === 'taken' && mode === 'signup' ? (
+                          <X className="h-4 w-4 text-rose-600" aria-label="Email already in use" />
+                        ) : emailLooksValid && emailLookup === 'taken' && mode === 'login' ? (
+                          <Check className="h-4 w-4 text-emerald-600" aria-label="Account found" />
+                        ) : emailLooksValid && emailLookup === 'available' && mode === 'login' ? (
+                          <X className="h-4 w-4 text-rose-600" aria-label="No account for this email" />
+                        ) : null}
+                      </span>
                     </div>
+                    {emailLooksValid && emailLookup === 'unknown' ? (
+                      <p className="text-xs text-slate-500">
+                        Could not verify this email from here — you can still try to continue.
+                      </p>
+                    ) : null}
                     {emailError ? <p className="text-xs text-rose-600">{emailError}</p> : null}
                   </div>
 
@@ -729,8 +866,15 @@ export function AuthPage() {
                       <button
                         type="button"
                         onClick={() => void onForgotPassword()}
-                        disabled={forgotSending}
-                        className="font-semibold text-[#1e4a8e] hover:underline disabled:opacity-50"
+                        disabled={forgotPasswordDisabled}
+                        title={
+                          emailLooksValid && emailLookup === 'available'
+                            ? 'No account uses this email'
+                            : emailLooksValid && emailLookup === 'checking'
+                              ? 'Checking this email…'
+                              : undefined
+                        }
+                        className="font-semibold text-[#1e4a8e] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {forgotSending ? 'Sending…' : 'Forgot password?'}
                       </button>
@@ -764,7 +908,7 @@ export function AuthPage() {
 
                   <button
                     type="submit"
-                    disabled={submitting}
+                    disabled={signupCreateDisabled}
                     className="inline-flex w-full items-center justify-center rounded-xl bg-[#cfae3f] px-5 py-3 text-sm font-semibold text-slate-950 shadow-sm transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {submitting ? 'Please wait…' : mode === 'login' ? 'Login' : 'Create account'}
