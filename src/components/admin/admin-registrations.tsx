@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Loader2, Mail, MoreVertical, NotebookPen, Pencil, Printer, Search, Trash2, Users, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Loader2, Mail, MoreVertical, NotebookPen, Pencil, Printer, Search, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { ImportParticipantsModal } from './admin-participant-modal'
 import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
@@ -25,6 +25,8 @@ function pill(status: string) {
   if (s === 'pending') return 'bg-amber-50 text-amber-700'
   if (s === 'failed') return 'bg-rose-50 text-rose-700'
   if (s === 'refunded') return 'bg-slate-100 text-slate-700'
+  if (s === 'onsite_cash') return 'bg-blue-50 text-blue-700'
+  if (s === 'sponsored') return 'bg-purple-50 text-purple-700'
   return 'bg-slate-100 text-slate-700'
 }
 
@@ -42,6 +44,8 @@ function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
   const pay = String(r.payment_status ?? '').toLowerCase()
   const regSt = String(r.status ?? '').toLowerCase()
   if (pay === 'paid') return false
+  // Onsite cash and sponsored are confirmed registrations — not deletable drafts.
+  if (pay === 'onsite_cash' || pay === 'sponsored') return false
   if (pay === 'pending') return true
   if (pay === 'unknown' && ['pending_payment', 'payment_processing'].includes(regSt)) return true
   return false
@@ -60,6 +64,17 @@ function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
 function isPaymongoPaymentReferenceId(raw: string) {
   const v = normalizePaymentReferenceDisplay(raw)
   return v.startsWith('pay_')
+}
+
+function isOnsiteOrSponsoredRegistration(row: AdminRegistrationRow): boolean {
+  const pay = String(row.payment_status ?? '').toLowerCase()
+  const reg = String(row.status ?? '').toLowerCase()
+  return pay === 'onsite_cash' || pay === 'sponsored' || reg === 'onsite_cash' || reg === 'sponsored'
+}
+
+function canGenerateBibForRow(row: AdminRegistrationRow, getProviderRef: (r: AdminRegistrationRow) => string): boolean {
+  if (isOnsiteOrSponsoredRegistration(row)) return true
+  return isPaymongoPaymentReferenceId(getProviderRef(row))
 }
 
 /** Strip accidental event-type suffixes from stored refs (legacy import appended `-criterium` / `-individual-time-trial`). */
@@ -149,6 +164,354 @@ type EventTypeRow = {
   name: string
 }
 
+// ─── Onsite Registration Modal ────────────────────────────────────────────────
+
+type OnsiteEventRow = { id: string; title: string; registration_fee: number; race_type: string | null }
+type OnsiteEventTypeRow = { slug: string; name: string }
+type OnsiteRaceCategoryRow = { id: string; discipline: string | null; category_name: string | null }
+
+function OnsiteRegistrationModal({
+  open,
+  onClose,
+  onSuccess,
+}: {
+  open: boolean
+  onClose: () => void
+  onSuccess: (registrationId: string, autoGenerateBib: boolean) => void
+}) {
+  const [paymentType, setPaymentType] = useState<'onsite_cash' | 'sponsored'>('onsite_cash')
+  const [events, setEvents] = useState<OnsiteEventRow[]>([])
+  const [selectedEventId, setSelectedEventId] = useState('')
+  const [eventTypes, setEventTypes] = useState<OnsiteEventTypeRow[]>([])
+  const [selectedSlug, setSelectedSlug] = useState('')
+  const [categories, setCategories] = useState<OnsiteRaceCategoryRow[]>([])
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [autoGenerateBib, setAutoGenerateBib] = useState(true)
+  const [feeInput, setFeeInput] = useState('')
+  const [loadingEvents, setLoadingEvents] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [form, setForm] = useState({
+    email: '', firstName: '', lastName: '', gender: '',
+    birthDate: '', address: '', contactNumber: '',
+    emergencyContactName: '', emergencyContactNumber: '',
+    teamName: '', jerseySize: '',
+  })
+  const setField = (k: keyof typeof form, v: string) => setForm((p) => ({ ...p, [k]: v }))
+
+  /* eslint-disable react-hooks/set-state-in-effect -- onsite modal: reset form and load dropdown data when opened */
+  // Reset form when opened
+  useEffect(() => {
+    if (!open) return
+    setPaymentType('onsite_cash')
+    setSelectedSlug('')
+    setSelectedCategoryId('')
+    setAutoGenerateBib(true)
+    setFeeInput('')
+    setFormError(null)
+    setForm({ email: '', firstName: '', lastName: '', gender: '', birthDate: '', address: '', contactNumber: '', emergencyContactName: '', emergencyContactNumber: '', teamName: '', jerseySize: '' })
+  }, [open])
+
+  // Fetch events
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setLoadingEvents(true)
+    void supabase
+      .from('events')
+      .select('id, title, registration_fee, race_type')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (!active) return
+        const evs = (data ?? []) as OnsiteEventRow[]
+        setEvents(evs)
+        if (evs[0]?.id) setSelectedEventId(evs[0].id)
+        setLoadingEvents(false)
+      })
+    return () => { active = false }
+  }, [open])
+
+  // Fetch event types when event changes
+  useEffect(() => {
+    if (!selectedEventId) return
+    const ev = events.find((e) => e.id === selectedEventId)
+    const slugs = String(ev?.race_type ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+    if (slugs.length === 0) { setEventTypes([]); setSelectedSlug(''); return }
+    void supabase.from('event_types').select('slug, name').in('slug', slugs).then(({ data }) => {
+      const rows = (data ?? []) as OnsiteEventTypeRow[]
+      setEventTypes(rows)
+      setSelectedSlug(rows[0]?.slug ?? '')
+    })
+  }, [selectedEventId, events])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Fetch race categories when event changes
+  useEffect(() => {
+    if (!selectedEventId) return
+    void supabase
+      .from('race_categories')
+      .select('id, discipline, category_name')
+      .eq('event_id', selectedEventId)
+      .eq('active', true)
+      .order('discipline', { ascending: true })
+      .order('category_name', { ascending: true })
+      .then(({ data }) => {
+        const rows = (data ?? []) as OnsiteRaceCategoryRow[]
+        setCategories(rows)
+        setSelectedCategoryId(rows[0]?.id ?? '')
+      })
+  }, [selectedEventId])
+
+  // Derived default fee — no effect needed, no setState cascade
+const defaultFee = useMemo(() => {
+  if (!open || !selectedEventId) return ''
+  if (paymentType === 'sponsored') return '0'
+  const ev = events.find((e) => e.id === selectedEventId)
+  return String(ev?.registration_fee ?? 0)
+}, [open, selectedEventId, paymentType, events])
+
+// Replace the problematic useEffect with this one — only resets when
+// the computed default actually changes, and only when the user hasn't
+// typed a custom value yet (i.e. it matches the previous default).
+const prevDefaultFee = useRef('')
+useEffect(() => {
+  if (defaultFee === prevDefaultFee.current) return
+  prevDefaultFee.current = defaultFee
+  setFeeInput(defaultFee)
+}, [defaultFee])
+
+  const selectedEvent = events.find((e) => e.id === selectedEventId) ?? null
+  const registrationFee = paymentType === 'sponsored' ? 0 : Math.max(0, Number(feeInput) || 0)
+  const selectedCategory = categories.find((c) => c.id === selectedCategoryId) ?? null
+  const selectedEventType = eventTypes.find((et) => et.slug === selectedSlug) ?? null
+
+  const handleSubmit = async () => {
+    setFormError(null)
+    if (!selectedEventId) { setFormError('Please select an event.'); return }
+    if (!selectedCategoryId) { setFormError('Please select a category.'); return }
+    if (!form.email.trim()) { setFormError('Email is required.'); return }
+    if (!form.firstName.trim()) { setFormError('First name is required.'); return }
+    if (!form.lastName.trim()) { setFormError('Last name is required.'); return }
+    if (!form.gender) { setFormError('Gender is required.'); return }
+    if (!form.birthDate) { setFormError('Date of birth is required.'); return }
+    if (!form.address.trim()) { setFormError('Address is required.'); return }
+    if (!form.contactNumber.trim()) { setFormError('Contact number is required.'); return }
+    if (!form.emergencyContactName.trim()) { setFormError('Emergency contact name is required.'); return }
+    if (!form.emergencyContactNumber.trim()) { setFormError('Emergency contact number is required.'); return }
+    if (paymentType === 'onsite_cash' && registrationFee <= 0) {
+      setFormError('Please enter the registration fee (e.g. early bird or regular rate).')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const { registrationId } = await adminApi.adminCreateOnsiteRegistration({
+        paymentType,
+        eventId: selectedEventId,
+        raceCategoryId: selectedCategoryId,
+        entryEventTypeSlug: selectedSlug || null,
+        entryEventTypeLabel: selectedEventType?.name ?? selectedSlug ?? '',
+        registrantEmail: form.email.trim(),
+        registrationFee,
+        rider: {
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          gender: form.gender,
+          birthDate: form.birthDate,
+          address: form.address.trim(),
+          contactNumber: form.contactNumber.trim(),
+          emergencyContactName: form.emergencyContactName.trim(),
+          emergencyContactNumber: form.emergencyContactNumber.trim(),
+          teamName: form.teamName.trim() || 'N/A',
+          discipline: selectedCategory?.discipline ?? undefined,
+          ageCategory: selectedCategory?.category_name ?? undefined,
+          jerseySize: form.jerseySize || undefined,
+        },
+      })
+      onSuccess(registrationId, autoGenerateBib)
+    } catch (e) {
+      setFormError((e as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!open) return null
+
+  const inputCls = 'h-9 w-full rounded-md border border-slate-200 bg-white px-2.5 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]'
+  const labelCls = 'text-xs font-semibold text-slate-700'
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Register Onsite</h2>
+            <p className="text-xs text-slate-500">Create a registration without online payment</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          {/* Payment Type */}
+          <div className="space-y-1.5">
+            <p className={labelCls}>Payment Type <span className="text-rose-500">*</span></p>
+            <div className="flex gap-2">
+              {(['onsite_cash', 'sponsored'] as const).map((pt) => (
+                <button
+                  key={pt}
+                  type="button"
+                  onClick={() => setPaymentType(pt)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-xs font-semibold transition ${paymentType === pt ? (pt === 'onsite_cash' ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-purple-400 bg-purple-50 text-purple-700') : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                >
+                  {pt === 'onsite_cash' ? '💵 Onsite Cash' : '🎁 Sponsored'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Event + Event Type */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className={labelCls}>Event <span className="text-rose-500">*</span></label>
+              {loadingEvents ? (
+                <div className="h-9 animate-pulse rounded-md bg-slate-200" />
+              ) : (
+                <select value={selectedEventId} onChange={(e) => setSelectedEventId(e.target.value)} className={inputCls}>
+                  {events.map((ev) => <option key={ev.id} value={ev.id}>{ev.title}</option>)}
+                </select>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Event Type</label>
+              <select value={selectedSlug} onChange={(e) => setSelectedSlug(e.target.value)} className={inputCls} disabled={eventTypes.length === 0}>
+                {eventTypes.length === 0 ? <option value="">—</option> : eventTypes.map((et) => <option key={et.slug} value={et.slug}>{et.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Category */}
+          <div className="space-y-1.5">
+            <label className={labelCls}>Category <span className="text-rose-500">*</span></label>
+            <select value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value)} className={inputCls} disabled={categories.length === 0}>
+              {categories.length === 0 ? <option value="">—</option> : categories.map((c) => <option key={c.id} value={c.id}>{c.discipline ?? ''} — {c.category_name ?? ''}</option>)}
+            </select>
+          </div>
+
+          {/* Event fee — manual entry (early bird / regular, etc.) */}
+          <div className="space-y-1.5">
+            <label className={labelCls}>
+              Registration Fee (₱) <span className="text-rose-500">*</span>
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={feeInput}
+              onChange={(e) => setFeeInput(e.target.value)}
+              disabled={paymentType === 'sponsored'}
+              className={`${inputCls} disabled:cursor-not-allowed disabled:bg-slate-50`}
+              placeholder={paymentType === 'sponsored' ? '0 (waived)' : 'e.g. early bird or regular'}
+            />
+            <p className={`text-[11px] ${paymentType === 'sponsored' ? 'text-purple-600' : 'text-slate-500'}`}>
+              {paymentType === 'sponsored'
+                ? 'Sponsored entries are stored with ₱0 fee.'
+                : selectedEvent
+                  ? `Event default: ₱${Number(selectedEvent.registration_fee ?? 0).toLocaleString()} — adjust if early bird or other rate.`
+                  : 'Enter the amount collected onsite.'}
+            </p>
+          </div>
+
+          {/* Rider Info */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className={labelCls}>Email <span className="text-rose-500">*</span></label>
+              <input type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} className={inputCls} placeholder="rider@email.com" />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>First Name <span className="text-rose-500">*</span></label>
+              <input type="text" value={form.firstName} onChange={(e) => setField('firstName', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Last Name <span className="text-rose-500">*</span></label>
+              <input type="text" value={form.lastName} onChange={(e) => setField('lastName', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Gender <span className="text-rose-500">*</span></label>
+              <select value={form.gender} onChange={(e) => setField('gender', e.target.value)} className={inputCls}>
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Date of Birth <span className="text-rose-500">*</span></label>
+              <input type="date" value={form.birthDate} onChange={(e) => setField('birthDate', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className={labelCls}>Address <span className="text-rose-500">*</span></label>
+              <input type="text" value={form.address} onChange={(e) => setField('address', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Contact Number <span className="text-rose-500">*</span></label>
+              <input type="tel" value={form.contactNumber} onChange={(e) => setField('contactNumber', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Jersey Size</label>
+              <select value={form.jerseySize} onChange={(e) => setField('jerseySize', e.target.value)} className={inputCls}>
+                <option value="">Select size</option>
+                {['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large'].map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Emergency Contact Name <span className="text-rose-500">*</span></label>
+              <input type="text" value={form.emergencyContactName} onChange={(e) => setField('emergencyContactName', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5">
+              <label className={labelCls}>Emergency Contact Number <span className="text-rose-500">*</span></label>
+              <input type="tel" value={form.emergencyContactNumber} onChange={(e) => setField('emergencyContactNumber', e.target.value)} className={inputCls} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <label className={labelCls}>Team Name</label>
+              <input type="text" value={form.teamName} onChange={(e) => setField('teamName', e.target.value)} className={inputCls} placeholder="Optional" />
+            </div>
+          </div>
+
+          {/* Auto bib */}
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-md border border-slate-200 px-3 py-2.5 hover:border-slate-300">
+            <input type="checkbox" checked={autoGenerateBib} onChange={(e) => setAutoGenerateBib(e.target.checked)} className="h-4 w-4 accent-[#1e4a8e]" />
+            <span className="text-xs font-medium text-slate-700">Auto-generate bib number after registration</span>
+          </label>
+
+          {formError && <p className="text-xs text-rose-600">{formError}</p>}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-md border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={submitting}
+            className="inline-flex items-center gap-1.5 rounded-md bg-[#1e4a8e] px-4 py-2 text-xs font-semibold text-white hover:bg-[#163b71] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Registering…</> : 'Register Rider'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 export function AdminRegistrations() {
   const PAGE_SIZE = 50
   const [rows, setRows] = useState<AdminRegistrationRow[]>([])
@@ -164,6 +527,7 @@ export function AdminRegistrations() {
   const [page, setPage] = useState(1)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [onsiteOpen, setOnsiteOpen] = useState(false)
   const [ledgerOpen, setLedgerOpen] = useState(false)
   const [ledgerEventId, setLedgerEventId] = useState('')
   const [ledgerDiscipline, setLedgerDiscipline] = useState('all')
@@ -711,12 +1075,12 @@ export function AdminRegistrations() {
     if (rowActionLoading[row.id]) return
 
     const hasBib = String(row.bib_number ?? '').trim().length > 0
-    const payRefOk = isPaymongoPaymentReferenceId(getEffectiveProviderReference(row))
+    const bibAllowed = canGenerateBibForRow(row, getEffectiveProviderReference)
     if (hasBib) {
       setActionBanner({ text: 'This registration already has a bib number.', tone: 'info' })
       return
     }
-    if (!payRefOk) {
+    if (!bibAllowed) {
       setActionBanner({
         text: 'Needs a PayMongo Reference No. (pay_...) on this row before a bib can be assigned.',
         tone: 'info',
@@ -867,6 +1231,14 @@ export function AdminRegistrations() {
               <>
                 <button
                   type="button"
+                  onClick={() => setOnsiteOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Register Onsite
+                </button>
+                <button
+                  type="button"
                   onClick={() => setImportOpen(true)}
                   className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
@@ -916,6 +1288,8 @@ export function AdminRegistrations() {
                 <option value="pending">Pending</option>
                 <option value="failed">Failed</option>
                 <option value="refunded">Refunded</option>
+                <option value="onsite_cash">Onsite Cash</option>
+                <option value="sponsored">Sponsored</option>
                 <option value="unknown">Unknown</option>
               </select>
               <select value={disciplineFilter} onChange={(e) => setDisciplineFilter(e.target.value)} className="h-10 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-[#1e4a8e]">
@@ -1022,8 +1396,11 @@ export function AdminRegistrations() {
                 paginated.map((r) => {
                   const payment = String(r.payment_status ?? 'unknown')
                   const isPaid = payment.toLowerCase() === 'paid'
+                  const isOnsiteOrSponsored = isOnsiteOrSponsoredRegistration(r)
+                  const bibAllowed = canGenerateBibForRow(r, getEffectiveProviderReference)
+                  const canSendQrEmail = (isPaid || isOnsiteOrSponsored) && Boolean(String(r.bib_number ?? '').trim())
                   const dupKey = `${String(r.registrant_email ?? '').toLowerCase()}|${String(r.event_title ?? '')}|${String(r.race_category_id ?? r.age_category ?? '')}|${String(r.entry_event_type_label ?? '').toLowerCase()}`
-                  const showDupWarning = !isPaid && duplicateNonPaidKeys.has(dupKey)
+                  const showDupWarning = !isPaid && !isOnsiteOrSponsored && duplicateNonPaidKeys.has(dupKey)
                   const providerRef = getEffectiveProviderReference(r)
                   const referenceNo = isPaymongoPaymentReferenceId(providerRef)
                     ? providerRef
@@ -1084,9 +1461,9 @@ export function AdminRegistrations() {
                             title={
                               String(r.bib_number ?? '').trim()
                                 ? undefined
-                                : isPaid
-                                  ? undefined
-                                  : 'Usually shown after paid; generate manually when Reference No. (pay_...) is set.'
+                                : bibAllowed
+                                  ? 'Generate bib for this registration.'
+                                  : 'Usually shown after paid; generate manually when Reference No. (pay_...) is set, or set status to Onsite Cash / Sponsored.'
                             }
                           >
                             {String(r.bib_number ?? '').trim()
@@ -1105,7 +1482,7 @@ export function AdminRegistrations() {
                             title={
                               rowActionLoading[r.id] === 'autobib'
                                 ? 'Generating bib…'
-                                : referenceNo && !String(r.bib_number ?? '').trim()
+                                : bibAllowed && !String(r.bib_number ?? '').trim()
                                   ? 'Generate bib'
                                   : 'Generate bib number'
                             }
@@ -1113,7 +1490,7 @@ export function AdminRegistrations() {
                             disabled={
                               rowActionLoading[r.id] != null
                               || Boolean(String(r.bib_number ?? '').trim())
-                              || !referenceNo
+                              || !bibAllowed
                             }
                             className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-[#1e4a8e]/30 text-[#1e4a8e] transition hover:bg-[#1e4a8e]/10 active:bg-[#1e4a8e]/15 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
                           >
@@ -1128,7 +1505,7 @@ export function AdminRegistrations() {
                             aria-label={rowActionLoading[r.id] === 'email' ? 'Sending QR email' : 'Send QR code email'}
                             title={rowActionLoading[r.id] === 'email' ? 'Sending email…' : 'Send QR mail'}
                             onClick={() => void handleSendQr(r.id)}
-                            disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
+                            disabled={rowActionLoading[r.id] != null || !canSendQrEmail}
                             className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-emerald-200 text-emerald-700 transition hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
                           >
                             {rowActionLoading[r.id] === 'email' ? (
@@ -1204,6 +1581,35 @@ export function AdminRegistrations() {
           )}
         </div>
       </section>
+
+      <OnsiteRegistrationModal
+        open={onsiteOpen}
+        onClose={() => setOnsiteOpen(false)}
+        onSuccess={(registrationId, autoGenerateBib) => {
+          setOnsiteOpen(false)
+          setActionBanner({ text: 'Onsite registration created successfully.', tone: 'success' })
+          void fetchData()
+          if (!autoGenerateBib) return
+          void (async () => {
+            try {
+              const result = await adminApi.adminGenerateBib(registrationId)
+              if (result?.error) throw new Error(result.error)
+              const nextBib = String(result?.bib_number ?? '').trim()
+              if (!nextBib) throw new Error('Bib assignment returned empty bib number.')
+              setActionBanner({
+                text: `Onsite registration created. Bib ${nextBib} assigned.`,
+                tone: 'success',
+              })
+              void fetchData()
+            } catch (e) {
+              setActionBanner({
+                text: `Registration saved, but bib generation failed: ${(e as Error).message}`,
+                tone: 'warning',
+              })
+            }
+          })()
+        }}
+      />
 
       {/* Import Participants Modal */}
       {importOpen && (
@@ -1378,8 +1784,8 @@ export function AdminRegistrations() {
                     role="menuitem"
                     title={
                       canManualDeletePendingEntry(portalMenuRow)
-                        ? 'Remove this unpaid checkout (allowed within 10 minutes of creation; same window as automatic purge).'
-                        : 'Older than 10 minutes — it will be removed automatically when the list refreshes (or use purge).'
+                        ? 'Remove this unpaid checkout (within 10 minutes of creation, before PayMongo checkout).'
+                        : 'Kept while PayMongo checkout is active; removed after the link expires (or after 10 min with no checkout).'
                     }
                     disabled={!canManualDeletePendingEntry(portalMenuRow)}
                     onClick={() => openPendingDeleteModal(portalMenuRow)}
@@ -1414,7 +1820,9 @@ export function AdminRegistrations() {
               <h3 id="delete-reg-title" className="text-sm font-semibold text-slate-900">
                 Delete pending registration?
               </h3>
-              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 10 minutes can be removed.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                This cannot be undone. Manual delete is only for unpaid rows within 10 minutes and no active PayMongo link.
+              </p>
             </div>
             <div className="space-y-2 px-4 py-3 text-sm text-slate-800">
               <p>
