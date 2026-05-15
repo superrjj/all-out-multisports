@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../services/api'
 import { supabase } from '../../lib/supabase'
-import { saveRegistrationCheckoutPayload, type RegistrationCheckoutLine } from '../../services/registrationService'
+import { saveRegistrationCheckoutPayload, registrationService, type RegistrationCheckoutLine } from '../../services/registrationService'
 import type { Event } from '../../types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -566,6 +566,9 @@ export function RegistrationForm() {
         }),
       )
 
+      // Save to sessionStorage as a backup before making API calls.
+      // If a network error occurs mid-way, the payment page fallback
+      // can still recover from sessionStorage.
       saveRegistrationCheckoutPayload({
         raceType: raceTypeLabel || (selectedEvent!.race_type ?? ''),
         eventId: selectedEvent!.id,
@@ -595,7 +598,52 @@ export function RegistrationForm() {
         },
       })
 
-      navigate('/register/payment')
+      // Create registration rows in the DB immediately on form submit so that
+      // rider info is persisted before the user is redirected to PayMongo.
+      // This prevents lost registrant info when the user leaves the checkout
+      // and comes back minutes, hours, or days later to complete payment.
+      const perEntry = registrationFee > 0 ? registrationFee : 1
+      let primaryId = ''
+      for (const line of checkoutLines) {
+        const slugRaw = line.slug?.trim()
+        const slug = slugRaw ? slugRaw : null
+        const label =
+          line.label?.trim() ||
+          raceTypeLabel.trim() ||
+          'Event'
+        const ageCategoryForLine =
+          String(line.categoryName ?? '').trim() ||
+          String(primaryCategoryForRider?.category_name ?? '').trim() ||
+          ''
+        const { registrationId: newId } = await registrationService.createRegistration({
+          raceType: label,
+          eventId: selectedEvent!.id,
+          raceCategoryId: line.raceCategoryId,
+          registrantEmail: form.email,
+          registrationFee: perEntry,
+          checkoutBundleId,
+          entryEventTypeSlug: slug,
+          entryEventTypeLabel: label,
+          rider: {
+            firstName: form.firstName,
+            lastName: form.lastName,
+            gender: form.gender,
+            birthDate: form.birthDate,
+            birthYear: form.birthDate ? new Date(form.birthDate).getFullYear() : null,
+            address: form.address,
+            contactNumber: form.contactNumber,
+            emergencyContactName: form.emergencyContactName,
+            emergencyContactNumber: form.emergencyContactNumber,
+            teamName: form.teamName || 'N/A',
+            discipline: form.discipline,
+            ageCategory: ageCategoryForLine,
+            jerseySize: shirtSize,
+          },
+        })
+        if (!primaryId) primaryId = newId
+      }
+
+      navigate(`/register/payment?registrationId=${encodeURIComponent(primaryId)}`)
     } catch (e) {
       setError((e as Error).message)
     } finally {

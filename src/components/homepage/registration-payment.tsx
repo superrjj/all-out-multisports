@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
 import {
   registrationService,
   type CheckoutItem,
@@ -322,6 +321,7 @@ export function RegistrationPayment() {
   const [error, setError] = useState<string | null>(null)
   const [checkoutPayload, setCheckoutPayload] = useState<RegistrationCheckoutPayload | null>(null)
   const [checkoutItem, setCheckoutItem] = useState<CheckoutItem | null>(null)
+  const [checkoutGuard, setCheckoutGuard] = useState<'loading' | 'ready' | 'redirecting'>('loading')
 
   const activeRegistrationId = registrationId
 
@@ -403,27 +403,39 @@ export function RegistrationPayment() {
     }
   }, [navigate, paymentState, registrationId])
 
-  // Guard: if this registrationId is already confirmed/paid, redirect to the success page
+  // PayMongo checkout session is source of truth for expired vs payable links
   useEffect(() => {
-    if (!registrationId || paymentState) return
+    if (!registrationId || paymentState) {
+      setCheckoutGuard('ready')
+      return
+    }
     let cancelled = false
+    setCheckoutGuard('loading')
     void (async () => {
       try {
-        const { data } = await supabase
-          .from('registration_forms')
-          .select('status')
-          .eq('id', registrationId)
-          .maybeSingle()
+        const status = await registrationService.checkCheckoutPaymentStatus(registrationId)
         if (cancelled) return
-        const status = String(data?.status ?? '').toLowerCase()
-        if (status === 'confirmed' || status === 'paid') {
+        if (status.action === 'paid') {
+          setCheckoutGuard('redirecting')
           void navigate(
             `/register/payment-success?registrationId=${encodeURIComponent(registrationId)}`,
             { replace: true },
           )
+          return
         }
+        if (status.action === 'restart') {
+          setCheckoutGuard('redirecting')
+          try {
+            sessionStorage.removeItem('paymongo_checkout_session')
+          } catch {
+            /* ignore */
+          }
+          void navigate('/register/info?checkout_expired=1', { replace: true })
+          return
+        }
+        setCheckoutGuard('ready')
       } catch {
-        /* ignore — let the user see the payment page */
+        if (!cancelled) setCheckoutGuard('ready')
       }
     })()
     return () => { cancelled = true }
@@ -525,10 +537,23 @@ export function RegistrationPayment() {
       }
       window.location.assign(payment.checkoutUrl)
     } catch (e) {
-      setError((e as Error).message)
+      const msg = (e as Error).message
+      if (/expired|no longer valid|start registration again/i.test(msg)) {
+        void navigate('/register/info?checkout_expired=1', { replace: true })
+        return
+      }
+      setError(msg)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (checkoutGuard === 'loading' || checkoutGuard === 'redirecting') {
+    return (
+      <section className="flex min-h-[50vh] items-center justify-center bg-white px-4 py-16 text-slate-600">
+        <p className="text-sm">Checking payment link…</p>
+      </section>
+    )
   }
 
   return (

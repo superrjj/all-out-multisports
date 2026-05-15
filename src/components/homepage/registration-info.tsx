@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import { api } from '../../services/api'
 import { supabase } from '../../lib/supabase'
@@ -164,6 +164,8 @@ function DisciplineCard({ group }: { group: DisciplineGroup }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function RegistrationInfo() {
+  const [searchParams] = useSearchParams()
+  const checkoutExpired = searchParams.get('checkout_expired') === '1'
   const { session } = useAuth()
   const [events, setEvents] = useState<Event[]>([])
   const [loading, setLoading] = useState(true)
@@ -305,6 +307,11 @@ export function RegistrationInfo() {
   return (
     <section className="bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 lg:px-8">
       <div className="mx-auto w-full max-w-[760px] space-y-8 sm:space-y-10">
+        {checkoutExpired ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">
+            Your previous PayMongo checkout link has expired. Please start a new registration below.
+          </div>
+        ) : null}
         {showHeroSkeleton ? (
           <ShimmerBlock className="h-40 w-full rounded-lg sm:h-48" />
         ) : (

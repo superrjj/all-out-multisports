@@ -22,6 +22,16 @@ export type CheckoutItem = {
   lineItemCount?: number
 }
 
+export type CheckoutPaymentStatus = {
+  action: 'continue' | 'paid' | 'restart'
+  reason?: string
+  message?: string | null
+  checkoutUrl?: string | null
+  checkoutSessionId?: string | null
+  registrationStatus?: string | null
+  checkoutSessionStatus?: string | null
+}
+
 export type RegistrationCheckoutEntry = {
   slug: string
   label: string
@@ -337,6 +347,16 @@ export const registrationService = {
       throw new Error(msg)
     }
     return { registrationId: data.registrationId as string }
+  },
+
+  async checkCheckoutPaymentStatus(registrationId: string): Promise<CheckoutPaymentStatus> {
+    const headers = await getAuthHeaders()
+    const { data, error } = await supabase.functions.invoke('public-check-checkout-status', {
+      headers,
+      body: { registrationId },
+    })
+    if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Unable to verify payment link.'))
+    return data as CheckoutPaymentStatus
   },
 
   async createPaymentOrder(args: {

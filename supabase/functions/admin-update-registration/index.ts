@@ -87,12 +87,18 @@ Deno.serve(async (req) => {
   /** Paid/confirmed rider switched race category: drop old bib so the next assignment uses the new class prefix. */
   const reassignBibAfterCategoryChange = categoryChanged && hadBib && isConfirmed && Boolean(nextCat)
 
+  const registrationStatusRaw = String(patch?.registrationStatus ?? '').trim()
+  const registrationFeeRaw = patch?.registrationFee
   const regPatch = {
     registrant_email: String(patch?.registrantEmail ?? '').trim() || null,
     entry_event_type_slug: String(patch?.entryEventTypeSlug ?? '').trim() || null,
     entry_event_type_label: String(patch?.entryEventTypeLabel ?? '').trim() || null,
     race_category_id: raceCategoryId,
     updated_at: now,
+    ...(registrationStatusRaw ? { status: registrationStatusRaw } : {}),
+    ...(registrationFeeRaw != null && Number.isFinite(Number(registrationFeeRaw))
+      ? { registration_fee: Math.max(0, Number(registrationFeeRaw)) }
+      : {}),
     ...(reassignBibAfterCategoryChange ? { bib_number: null } : {}),
   }
 
