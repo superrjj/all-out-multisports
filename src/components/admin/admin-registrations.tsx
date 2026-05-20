@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { jsPDF } from 'jspdf'
+import * as XLSX from 'xlsx'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ClipboardList, Copy, Loader2, Mail, MoreVertical, NotebookPen, Pencil, Printer, Search, Trash2, Users, X } from 'lucide-react'
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardList, Copy, Download, Loader2, Mail, MoreVertical, NotebookPen, Pencil, Printer, Search, Trash2, Users, X } from 'lucide-react'
 import { ImportParticipantsModal } from './admin-participant-modal'
 import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
@@ -17,6 +18,217 @@ function formatEventTypeSlugLabel(slug: string | null | undefined) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
+}
+
+function formatQrCertEmailSentAt(iso: string | null | undefined) {
+  const raw = String(iso ?? '').trim()
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+const EXPORT_COL_HEADERS = [
+  'No.',
+  'Bib No.',
+  'Rider Name',
+  'Email',
+  'Team',
+  'Payment Status',
+  'PayMongo Reference',
+  'QR Kit Email',
+  'Registered',
+] as const
+
+const EXPORT_COL_COUNT = EXPORT_COL_HEADERS.length
+
+type ExportGroupKey = {
+  event: string
+  eventType: string
+  discipline: string
+  category: string
+}
+
+type ExportGroup = {
+  key: ExportGroupKey
+  rows: AdminRegistrationRow[]
+}
+
+type OrganizedExport = {
+  generatedAt: string
+  totalCount: number
+  groupCount: number
+  groups: ExportGroup[]
+}
+
+function registrationExportFilename(ext: 'csv' | 'xlsx') {
+  const d = new Date()
+  const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return `hari-ng-ahon-registrations-${stamp}.${ext}`
+}
+
+function triggerBrowserFileDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+function exportLabel(value: string | null | undefined, fallback: string) {
+  const v = String(value ?? '').trim()
+  return v || fallback
+}
+
+function formatExportDate(iso: string | null | undefined) {
+  const raw = String(iso ?? '').trim()
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function buildOrganizedExport(rows: AdminRegistrationRow[]): OrganizedExport {
+  const map = new Map<string, ExportGroup>()
+  for (const row of rows) {
+    const key: ExportGroupKey = {
+      event: exportLabel(row.event_title ?? row.race_type, 'No Event'),
+      eventType: exportLabel(row.entry_event_type_label ?? formatEventTypeSlugLabel(row.entry_event_type_slug), 'No Event Type'),
+      discipline: exportLabel(row.discipline, 'No Discipline'),
+      category: exportLabel(row.age_category, 'No Category'),
+    }
+    const id = JSON.stringify(key)
+    const hit = map.get(id)
+    if (hit) hit.rows.push(row)
+    else map.set(id, { key, rows: [row] })
+  }
+  const groups = Array.from(map.values()).sort((a, b) => {
+    return (
+      a.key.event.localeCompare(b.key.event) ||
+      a.key.eventType.localeCompare(b.key.eventType) ||
+      a.key.discipline.localeCompare(b.key.discipline) ||
+      a.key.category.localeCompare(b.key.category)
+    )
+  })
+  for (const g of groups) {
+    g.rows.sort((a, b) =>
+      String(a.rider_full_name ?? '').localeCompare(String(b.rider_full_name ?? ''), undefined, { sensitivity: 'base' }),
+    )
+  }
+  return {
+    generatedAt: new Date().toLocaleString('en-PH', { dateStyle: 'long', timeStyle: 'short' }),
+    totalCount: rows.length,
+    groupCount: groups.length,
+    groups,
+  }
+}
+
+function padRow(cells: string[]): string[] {
+  const row = [...cells]
+  while (row.length < EXPORT_COL_COUNT) row.push('')
+  return row.slice(0, EXPORT_COL_COUNT)
+}
+
+function dataRow(
+  row: AdminRegistrationRow,
+  index: number,
+  resolveReference: (row: AdminRegistrationRow) => string,
+): string[] {
+  const ref = resolveReference(row)
+  const payRef = ref.startsWith('pay_') ? ref : ''
+  const qr = row.qr_cert_email_sent
+    ? row.qr_cert_email_sent_at
+      ? `Sent — ${formatQrCertEmailSentAt(row.qr_cert_email_sent_at)}`
+      : 'Sent'
+    : 'Not sent'
+  return [
+    String(index),
+    String(row.bib_number ?? '').trim(),
+    String(row.rider_full_name ?? '').trim(),
+    String(row.registrant_email ?? '').trim(),
+    String(row.team_name ?? '').trim() || 'N/A',
+    String(row.payment_status ?? '').trim().toUpperCase(),
+    payRef,
+    qr,
+    formatExportDate(row.created_at),
+  ]
+}
+
+function buildMainExportSheet(exportData: OrganizedExport, resolveReference: (row: AdminRegistrationRow) => string) {
+  const aoa: string[][] = []
+  const merges: XLSX.Range[] = []
+  const colWidths = [5, 9, 24, 28, 16, 14, 26, 20, 18]
+
+  const push = (cells: string[]) => {
+    aoa.push(padRow(cells))
+    return aoa.length - 1
+  }
+
+  const titleR = push(['ALL OUT MULTISPORTS — REGISTRATION EXPORT'])
+  merges.push({ s: { r: titleR, c: 0 }, e: { r: titleR, c: EXPORT_COL_COUNT - 1 } })
+
+  push(['Generated', exportData.generatedAt])
+  push(['Total registrations', String(exportData.totalCount)])
+  push(['Sections', String(exportData.groupCount)])
+  push(['Sort order', 'Event → Event Type → Discipline → Category → Rider name'])
+  push([])
+
+  for (const group of exportData.groups) {
+    const bannerR = push([
+      `${group.key.event}  |  ${group.key.eventType}  |  ${group.key.discipline}  |  ${group.key.category}`,
+    ])
+    merges.push({ s: { r: bannerR, c: 0 }, e: { r: bannerR, c: EXPORT_COL_COUNT - 1 } })
+    push(['Event', group.key.event])
+    push(['Event Type', group.key.eventType])
+    push(['Discipline', group.key.discipline])
+    push(['Category', group.key.category])
+    push(['Participants', String(group.rows.length)])
+    push([...EXPORT_COL_HEADERS])
+    group.rows.forEach((row, i) => push(dataRow(row, i + 1, resolveReference)))
+    push([])
+  }
+
+  return { aoa, merges, colWidths }
+}
+
+function buildSummarySheet(exportData: OrganizedExport) {
+  const aoa: string[][] = [
+    ['EXPORT SUMMARY'],
+    ['Generated', exportData.generatedAt],
+    ['Total registrations', String(exportData.totalCount)],
+    [],
+    ['Event', 'Event Type', 'Discipline', 'Category', 'Count'],
+  ]
+  for (const g of exportData.groups) {
+    aoa.push([g.key.event, g.key.eventType, g.key.discipline, g.key.category, String(g.rows.length)])
+  }
+  return aoa
+}
+
+function downloadOrganizedCsv(exportData: OrganizedExport, resolveReference: (row: AdminRegistrationRow) => string) {
+  const { aoa } = buildMainExportSheet(exportData, resolveReference)
+  const sheet = XLSX.utils.aoa_to_sheet(aoa)
+  const csv = XLSX.utils.sheet_to_csv(sheet)
+  triggerBrowserFileDownload(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }), registrationExportFilename('csv'))
+}
+
+function downloadOrganizedXlsx(exportData: OrganizedExport, resolveReference: (row: AdminRegistrationRow) => string) {
+  const { aoa, merges, colWidths } = buildMainExportSheet(exportData, resolveReference)
+  const main = XLSX.utils.aoa_to_sheet(aoa)
+  main['!merges'] = merges
+  main['!cols'] = colWidths.map((wch) => ({ wch }))
+
+  const summary = XLSX.utils.aoa_to_sheet(buildSummarySheet(exportData))
+  summary['!cols'] = [{ wch: 28 }, { wch: 22 }, { wch: 16 }, { wch: 22 }, { wch: 8 }]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, summary, 'Summary')
+  XLSX.utils.book_append_sheet(wb, main, 'Registrations')
+  XLSX.writeFile(wb, registrationExportFilename('xlsx'))
 }
 
 function pill(status: string) {
@@ -37,29 +249,29 @@ function ShimmerLine({ className }: { className: string }) {
 }
 
 
-/** Matches server rules for manual delete / stale purge (unpaid checkout only). */
-function isUnpaidDraftRegistrationRow(r: AdminRegistrationRow): boolean {
-  const pay = String(r.payment_status ?? '').toLowerCase()
-  const regSt = String(r.status ?? '').toLowerCase()
-  if (pay === 'paid') return false
-  if (pay === 'pending') return true
-  if (pay === 'unknown' && ['pending_payment', 'payment_processing'].includes(regSt)) return true
-  return false
-}
-
-const PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS = 10 * 60 * 1000
-
-function canManualDeletePendingEntry(r: AdminRegistrationRow): boolean {
-  if (!isUnpaidDraftRegistrationRow(r)) return false
-  const created = r.created_at ? new Date(r.created_at).getTime() : NaN
-  if (!Number.isFinite(created)) return false
-  return Date.now() - created <= PENDING_CHECKOUT_MANUAL_DELETE_MAX_AGE_MS
-}
-
 /** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
 function isPaymongoPaymentReferenceId(raw: string) {
   const v = normalizePaymentReferenceDisplay(raw)
   return v.startsWith('pay_')
+}
+
+/** Onsite cash payment ids (e.g. ONSITE_CASH10) stored on payment_orders. */
+function isOnsiteCashPaymentReference(raw: string) {
+  const v = normalizePaymentReferenceDisplay(raw)
+  return /^ONSITE_CASH\d*$/i.test(v)
+}
+
+/** Reference is sufficient to assign a bib (PayMongo or onsite cash). */
+function isBibAssignablePaymentReference(raw: string) {
+  const v = normalizePaymentReferenceDisplay(raw)
+  if (!v) return false
+  return isPaymongoPaymentReferenceId(v) || isOnsiteCashPaymentReference(v)
+}
+
+/** Shown in Reference No. column and used to enable Generate bib. */
+function getDisplayPaymentReference(raw: string) {
+  const v = normalizePaymentReferenceDisplay(raw)
+  return isBibAssignablePaymentReference(v) ? v : ''
 }
 
 /** Strip accidental event-type suffixes from stored refs (legacy import appended `-criterium` / `-individual-time-trial`). */
@@ -104,6 +316,7 @@ function SkeletonRow() {
       <td className="py-3 pr-3"><ShimmerLine className="h-5 w-16 rounded-full" /></td>
       <td className="py-3 pr-3"><ShimmerLine className="h-3 w-24 rounded" /></td>
       <td className="py-3 pr-3"><ShimmerLine className="h-3 w-10 rounded" /></td>
+      <td className="py-3 pr-3"><ShimmerLine className="h-5 w-14 rounded-full" /></td>
       <td className="py-3 pr-4 text-right"><ShimmerLine className="ml-auto h-6 w-12 rounded-md" /></td>
     </tr>
   )
@@ -176,6 +389,8 @@ export function AdminRegistrations() {
   const [rowActionLoading, setRowActionLoading] = useState<Record<string, 'autobib' | 'email' | 'delete' | null>>({})
   /** Fixed-position row menu (portal) so it is not clipped by the table scroll container. */
   const [rowMenuPortal, setRowMenuPortal] = useState<{ id: string; top: number; right: number } | null>(null)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [pendingDeleteRow, setPendingDeleteRow] = useState<AdminRegistrationRow | null>(null)
   const tableScrollRef = useRef<HTMLDivElement>(null)
   /** Mouse drag on table body/headers to scroll horizontally (scrollbar hidden). Touch uses native pan. */
@@ -502,7 +717,9 @@ export function AdminRegistrations() {
 
   const getEffectiveProviderReference = (row: AdminRegistrationRow) => {
     const direct = normalizePaymentReferenceDisplay(String(row.provider_reference ?? ''))
-    if (direct.startsWith('pay_')) return direct
+    if (direct.startsWith('pay_') || isOnsiteCashPaymentReference(direct)) return direct
+    const merchant = normalizePaymentReferenceDisplay(String(row.merchant_reference ?? ''))
+    if (isOnsiteCashPaymentReference(merchant)) return merchant
     const sid = extractTallySubmissionFromMerchantReference(String(row.merchant_reference ?? ''))
     if (!sid) return direct
     return sharedPayIdByTallySubmission.get(sid) ?? direct
@@ -690,12 +907,22 @@ export function AdminRegistrations() {
   }, [ledgerOpen, ledgerEventId, ledgerDiscipline, ledgerCategoryId, ledgerCategoryOptions])
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  function markRowQrCertEmailSent(registrationId: string) {
+    const at = new Date().toISOString()
+    setRows((prev) =>
+      prev.map((item) =>
+        item.id === registrationId ? { ...item, qr_cert_email_sent: true, qr_cert_email_sent_at: at } : item,
+      ),
+    )
+  }
+
   async function handleSendQr(registrationId: string) {
     setRowActionLoading((prev) => ({ ...prev, [registrationId]: 'email' }))
     setActionBanner(null)
     try {
       const result = await adminApi.adminSendRaceKitEmail(registrationId)
       if (result?.error) throw new Error(result.error)
+      markRowQrCertEmailSent(registrationId)
       setActionBanner({
         text: `QR code email sent for registration ${registrationId.slice(0, 8)}.`,
         tone: 'success',
@@ -711,14 +938,14 @@ export function AdminRegistrations() {
     if (rowActionLoading[row.id]) return
 
     const hasBib = String(row.bib_number ?? '').trim().length > 0
-    const payRefOk = isPaymongoPaymentReferenceId(getEffectiveProviderReference(row))
+    const payRef = getDisplayPaymentReference(getEffectiveProviderReference(row))
     if (hasBib) {
       setActionBanner({ text: 'This registration already has a bib number.', tone: 'info' })
       return
     }
-    if (!payRefOk) {
+    if (!payRef) {
       setActionBanner({
-        text: 'Needs a PayMongo Reference No. (pay_...) on this row before a bib can be assigned.',
+        text: 'Needs a payment reference (pay_... or ONSITE_CASH...) on this row before a bib can be assigned.',
         tone: 'info',
       })
       return
@@ -741,9 +968,11 @@ export function AdminRegistrations() {
       }
 
       let emailWarning = ''
+      let qrEmailSentAt: string | null = null
       try {
         const sent = await adminApi.adminSendRaceKitEmail(row.id)
         if (sent?.error) throw new Error(sent.error)
+        qrEmailSentAt = new Date().toISOString()
       } catch (mailErr) {
         emailWarning = ` Email: ${(mailErr as Error).message || 'failed to send QR code email.'}`
       }
@@ -751,7 +980,12 @@ export function AdminRegistrations() {
       setRows((prev) =>
         prev.map((item) =>
           item.id === row.id
-            ? { ...item, bib_number: nextBib, provider_reference: result.provider_reference ?? item.provider_reference }
+            ? {
+                ...item,
+                bib_number: nextBib,
+                provider_reference: result.provider_reference ?? item.provider_reference,
+                ...(qrEmailSentAt ? { qr_cert_email_sent: true, qr_cert_email_sent_at: qrEmailSentAt } : null),
+              }
             : item,
         ),
       )
@@ -770,7 +1004,6 @@ export function AdminRegistrations() {
   }
 
   function openPendingDeleteModal(row: AdminRegistrationRow) {
-    if (!canManualDeletePendingEntry(row)) return
     setRowMenuPortal(null)
     setPendingDeleteRow(row)
   }
@@ -781,10 +1014,10 @@ export function AdminRegistrations() {
     setRowActionLoading((prev) => ({ ...prev, [row.id]: 'delete' }))
     setActionBanner(null)
     try {
-      await adminApi.adminDeletePendingRegistration(row.id)
+      await adminApi.adminDeleteRegistration(row.id)
       setRows((prev) => prev.filter((item) => item.id !== row.id))
       setPendingDeleteRow(null)
-      setActionBanner({ text: `Deleted pending registration for ${label}.`, tone: 'success' })
+      setActionBanner({ text: `Deleted registration for ${label}.`, tone: 'success' })
     } catch (e) {
       setActionBanner({ text: (e as Error).message || 'Delete failed.', tone: 'error' })
     } finally {
@@ -839,6 +1072,21 @@ export function AdminRegistrations() {
     root?.classList.remove('cursor-grabbing', 'select-none')
   }, [])
 
+  function handleExportRegistrations(format: 'csv' | 'xlsx') {
+    setDownloadMenuOpen(false)
+    if (filtered.length === 0) {
+      setActionBanner({ text: 'No registrations to export for the current filters.', tone: 'info' })
+      return
+    }
+    const exportData = buildOrganizedExport(filtered)
+    if (format === 'csv') downloadOrganizedCsv(exportData, getEffectiveProviderReference)
+    else downloadOrganizedXlsx(exportData, getEffectiveProviderReference)
+    setActionBanner({
+      text: `Downloaded ${exportData.totalCount} registration${exportData.totalCount === 1 ? '' : 's'} (${exportData.groupCount} sections) as ${format.toUpperCase()}.`,
+      tone: 'success',
+    })
+  }
+
   return (
     <div className="space-y-4">
       <section className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
@@ -890,6 +1138,46 @@ export function AdminRegistrations() {
                   <ClipboardList className="h-3.5 w-3.5" />
                   View Legend
                 </button>
+                <div className="relative" ref={downloadMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setDownloadMenuOpen((v) => !v)}
+                    disabled={filtered.length === 0}
+                    aria-expanded={downloadMenuOpen}
+                    aria-haspopup="menu"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#1e4a8e] bg-[#1e4a8e] py-2 pl-3 pr-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#163d75] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+                  >
+                    <Download className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    Download
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 shrink-0 transition-transform ${downloadMenuOpen ? 'rotate-180' : ''}`}
+                      aria-hidden
+                    />
+                  </button>
+                  {downloadMenuOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-[calc(100%+6px)] z-50 min-w-[11rem] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-slate-800 hover:bg-slate-50"
+                        onClick={() => handleExportRegistrations('xlsx')}
+                      >
+                        Excel (.xlsx)
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2.5 text-left text-xs font-medium text-slate-800 hover:bg-slate-50"
+                        onClick={() => handleExportRegistrations('csv')}
+                      >
+                        CSV (.csv)
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </>
             )}
           </div>
@@ -991,8 +1279,8 @@ export function AdminRegistrations() {
             onPointerCancel={endTableDragScroll}
             onLostPointerCapture={onTableLostPointerCapture}
           >
-          <table className="w-max min-w-[100%] max-w-none table-auto border-collapse text-left text-sm">
-            <thead className="sticky top-0 z-20 bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500 shadow-[0_1px_0_0_rgb(226_232_240)]">
+          <table className="w-full min-w-max max-w-none table-auto border-collapse text-left text-sm">
+            <thead className="sticky top-0 z-20 bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500 shadow-[0_1px_0_0_rgb(226_232_240)] [&_th]:bg-slate-50">
               <tr>
                 <th className="min-w-[152px] max-w-[280px] whitespace-normal py-3 pl-4 pr-3 font-semibold">Rider Name</th>
                 <th className="min-w-[168px] max-w-[280px] whitespace-normal py-3 pr-3 font-semibold">Event</th>
@@ -1002,6 +1290,7 @@ export function AdminRegistrations() {
                 <th className="min-w-[112px] py-3 pr-3 font-semibold">Payment Status</th>
                 <th className="min-w-[240px] py-3 pr-3 font-semibold">Reference No.</th>
                 <th className="min-w-[90px] py-3 pr-3 font-semibold">Bib Number</th>
+                <th className="min-w-[108px] py-3 pr-3 font-semibold">QR Kit Email</th>
                 <th className="min-w-[148px] whitespace-nowrap py-3 pr-4 text-right font-semibold">Actions</th>
               </tr>
             </thead>
@@ -1010,7 +1299,7 @@ export function AdminRegistrations() {
                 Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />)
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td className="py-12 text-center" colSpan={9}>
+                  <td className="py-12 text-center" colSpan={10}>
                     <div className="flex flex-col items-center gap-2 text-slate-400">
                       <Users className="h-8 w-8 opacity-40" />
                       <p className="text-sm font-medium">No registrations found.</p>
@@ -1028,6 +1317,8 @@ export function AdminRegistrations() {
                   const referenceNo = isPaymongoPaymentReferenceId(providerRef)
                     ? providerRef
                     : ''
+                  const qrEmailSent = Boolean(r.qr_cert_email_sent)
+                  const qrEmailSentLabel = formatQrCertEmailSentAt(r.qr_cert_email_sent_at)
                   return (
                     <tr key={r.id} className="text-slate-800 transition-colors hover:bg-slate-50/70">
                       <td className="min-w-0 max-w-[280px] py-3 pl-4 pr-3 align-top">
@@ -1086,7 +1377,7 @@ export function AdminRegistrations() {
                                 ? undefined
                                 : isPaid
                                   ? undefined
-                                  : 'Usually shown after paid; generate manually when Reference No. (pay_...) is set.'
+                                  : 'Usually shown after paid; generate manually when a payment reference (pay_... or ONSITE_CASH...) is set.'
                             }
                           >
                             {String(r.bib_number ?? '').trim()
@@ -1096,6 +1387,33 @@ export function AdminRegistrations() {
                                 : '—'}
                           </span>
                         </span>
+                      </td>
+                      <td className="py-3 pr-3 align-top">
+                        {qrEmailSent ? (
+                          <span
+                            className="inline-flex max-w-[140px] flex-col gap-0.5"
+                            title={
+                              qrEmailSentLabel
+                                ? `Sent to ${r.registrant_email ?? 'registrant'} on ${qrEmailSentLabel} (notification_deliveries.status = sent).`
+                                : `Sent to ${r.registrant_email ?? 'registrant'} (notification_deliveries.status = sent).`
+                            }
+                          >
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                              <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
+                              Sent
+                            </span>
+                            {qrEmailSentLabel ? (
+                              <span className="text-[10px] leading-snug text-slate-500">{qrEmailSentLabel}</span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500"
+                            title="No sent record in notification_deliveries for this registration email."
+                          >
+                            Not sent
+                          </span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap py-3 pr-4 text-right align-middle">
                         <div className="inline-flex flex-nowrap items-center justify-end gap-1">
@@ -1125,11 +1443,27 @@ export function AdminRegistrations() {
                           </button>
                           <button
                             type="button"
-                            aria-label={rowActionLoading[r.id] === 'email' ? 'Sending QR email' : 'Send QR code email'}
-                            title={rowActionLoading[r.id] === 'email' ? 'Sending email…' : 'Send QR mail'}
+                            aria-label={
+                              rowActionLoading[r.id] === 'email'
+                                ? 'Sending QR email'
+                                : qrEmailSent
+                                  ? 'Resend QR code email'
+                                  : 'Send QR code email'
+                            }
+                            title={
+                              rowActionLoading[r.id] === 'email'
+                                ? 'Sending email…'
+                                : qrEmailSent && qrEmailSentLabel
+                                  ? `Already sent (${qrEmailSentLabel}). Click to resend.`
+                                  : qrEmailSent
+                                    ? 'Already sent. Click to resend.'
+                                    : 'Send QR Code Race Claim Kit certificate email'
+                            }
                             onClick={() => void handleSendQr(r.id)}
                             disabled={rowActionLoading[r.id] != null || !isPaid || !String(r.bib_number ?? '').trim()}
-                            className="inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border border-emerald-200 text-emerald-700 transition hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9"
+                            className={`inline-flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-md border transition hover:bg-emerald-50 active:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9 sm:w-9 ${
+                              qrEmailSent ? 'border-emerald-600 bg-emerald-50/80 text-emerald-800' : 'border-emerald-200 text-emerald-700'
+                            }`}
                           >
                             {rowActionLoading[r.id] === 'email' ? (
                               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -1372,23 +1706,17 @@ export function AdminRegistrations() {
                 >
                   View registration
                 </Link>
-                {isUnpaidDraftRegistrationRow(portalMenuRow) ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    title={
-                      canManualDeletePendingEntry(portalMenuRow)
-                        ? 'Remove this unpaid checkout (allowed within 10 minutes of creation; same window as automatic purge).'
-                        : 'Older than 10 minutes — it will be removed automatically when the list refreshes (or use purge).'
-                    }
-                    disabled={!canManualDeletePendingEntry(portalMenuRow)}
-                    onClick={() => openPendingDeleteModal(portalMenuRow)}
-                    className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:py-2 sm:text-xs"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    Delete entry
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  title="Permanently delete this registration and related payment records from the database."
+                  disabled={rowActionLoading[portalMenuRow.id] != null}
+                  onClick={() => openPendingDeleteModal(portalMenuRow)}
+                  className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent sm:min-h-0 sm:py-2 sm:text-xs"
+                >
+                  <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Delete entry
+                </button>
               </div>
             </>,
             document.body,
@@ -1412,9 +1740,12 @@ export function AdminRegistrations() {
           >
             <div className="border-b border-slate-100 px-4 py-3">
               <h3 id="delete-reg-title" className="text-sm font-semibold text-slate-900">
-                Delete pending registration?
+                Delete registration?
               </h3>
-              <p className="mt-1 text-xs text-slate-500">This cannot be undone. Only unpaid checkout rows within 10 minutes can be removed.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                This cannot be undone. The registration, rider details, payment records, and related data will be removed
+                from the database permanently.
+              </p>
             </div>
             <div className="space-y-2 px-4 py-3 text-sm text-slate-800">
               <p>
