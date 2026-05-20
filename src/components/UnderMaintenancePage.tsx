@@ -1,6 +1,8 @@
 import { ArrowUpRight, CheckCircle2 } from 'lucide-react'
 
+
 const TALLY_REGISTRATION_URL = 'https://tally.so/r/0QbbrA'
+
 
 export function UnderMaintenancePage() {
   return (
@@ -12,18 +14,22 @@ export function UnderMaintenancePage() {
           className="mx-auto h-28 w-auto sm:h-32"
         />
 
+
         <p className="mt-3 text-center text-[10px] font-semibold uppercase tracking-wider text-[#1e4a8e]">
           Hari ng Ahon 2026 · Criterium &amp; ITT
         </p>
+
 
         <h1 className="mt-1.5 text-center text-lg font-semibold text-slate-900">
           We&apos;re fixing online checkout
         </h1>
 
+
         <p className="mt-2 text-center text-xs leading-relaxed text-slate-600">
           PayMongo is temporarily unavailable on this site. Registration is still open via our official
           Tally form below.
         </p>
+
 
         <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
           <p className="font-medium text-slate-900">What to do now</p>
@@ -45,6 +51,7 @@ export function UnderMaintenancePage() {
           </ul>
         </div>
 
+
         <a
           href={TALLY_REGISTRATION_URL}
           target="_blank"
@@ -55,6 +62,7 @@ export function UnderMaintenancePage() {
           <ArrowUpRight className="h-3.5 w-3.5" aria-hidden />
         </a>
         <p className="mt-1.5 text-center text-[10px] text-slate-500">Opens in a new tab</p>
+
 
         <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-500">
           <p>
@@ -68,9 +76,15 @@ export function UnderMaintenancePage() {
         </div>
       </div>
 
+
       <p className="mt-4 text-center text-[10px] text-slate-400">
         All Out Multisports · Hari ng Ahon
       </p>
     </div>
   )
 }
+
+
+
+
+

@@ -3,14 +3,17 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { retrievePaymongoCheckoutSession } from '../_shared/paymongo-checkout-session.ts'
 
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+
 
 function jsonResponse(body: Record<string, unknown>, status: number) {
   return new Response(JSON.stringify(body), {
@@ -19,12 +22,15 @@ function jsonResponse(body: Record<string, unknown>, status: number) {
   })
 }
 
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405)
 
+
   const authHeader = req.headers.get('authorization') || req.headers.get('Authorization')
   if (!authHeader) return jsonResponse({ code: 'UNAUTHORIZED', message: 'Missing authorization' }, 401)
+
 
   const jwt = authHeader.replace(/^Bearer\s+/i, '').trim()
   const { data: authData, error: authError } = await supabase.auth.getUser(jwt)
@@ -33,6 +39,7 @@ Deno.serve(async (req) => {
   }
   const userId = authData.user.id
 
+
   let body: { registrationId?: string }
   try {
     body = await req.json()
@@ -40,8 +47,10 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Invalid JSON' }, 400)
   }
 
+
   const registrationId = String(body?.registrationId ?? '').trim()
   if (!registrationId) return jsonResponse({ error: 'Missing registrationId' }, 400)
+
 
   const { data: reg, error: regErr } = await supabase
     .from('registration_forms')
@@ -50,6 +59,7 @@ Deno.serve(async (req) => {
     .maybeSingle()
   if (regErr) return jsonResponse({ error: regErr.message }, 500)
 
+
   if (!reg?.id) {
     return jsonResponse({
       action: 'restart',
@@ -57,6 +67,7 @@ Deno.serve(async (req) => {
       message: 'This checkout link is no longer valid. Please start registration again.',
     }, 200)
   }
+
 
   const regStatus = String(reg.status ?? '').toLowerCase()
   if (regStatus === 'confirmed' || regStatus === 'paid') {
@@ -69,6 +80,7 @@ Deno.serve(async (req) => {
       message: 'This registration was cancelled. Please start again.',
     }, 200)
   }
+
 
   if (String(reg.user_id ?? '') !== userId) {
     const bid = String(reg.checkout_bundle_id ?? '').trim()
@@ -91,6 +103,7 @@ Deno.serve(async (req) => {
     }
   }
 
+
   let { data: order } = await supabase
     .from('payment_orders')
     .select('id, status, paymongo_checkout_session_id')
@@ -98,6 +111,7 @@ Deno.serve(async (req) => {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+
 
   if (!order?.id && reg.checkout_bundle_id) {
     const { data: bundleOrder } = await supabase
@@ -110,10 +124,12 @@ Deno.serve(async (req) => {
     order = bundleOrder
   }
 
+
   const orderStatus = String(order?.status ?? '').toLowerCase()
   if (orderStatus === 'paid') {
     return jsonResponse({ action: 'paid', registrationStatus: reg.status }, 200)
   }
+
 
   const sessionId = String(order?.paymongo_checkout_session_id ?? '').trim()
   if (!sessionId) {
@@ -125,6 +141,7 @@ Deno.serve(async (req) => {
     }, 200)
   }
 
+
   const session = await retrievePaymongoCheckoutSession(sessionId)
   if (!session) {
     return jsonResponse({
@@ -134,9 +151,11 @@ Deno.serve(async (req) => {
     }, 200)
   }
 
+
   if (session.isPaid) {
     return jsonResponse({ action: 'paid', registrationStatus: reg.status, checkoutSessionStatus: session.status }, 200)
   }
+
 
   if (session.isExpired) {
     return jsonResponse({
@@ -146,6 +165,7 @@ Deno.serve(async (req) => {
       message: 'Your PayMongo payment link has expired. Please start registration again for a new link.',
     }, 200)
   }
+
 
   if (session.isActive && session.checkoutUrl) {
     return jsonResponse({
@@ -157,6 +177,7 @@ Deno.serve(async (req) => {
     }, 200)
   }
 
+
   return jsonResponse({
     action: 'restart',
     reason: 'session_unusable',
@@ -164,3 +185,6 @@ Deno.serve(async (req) => {
     message: 'Payment link is no longer available. Please start registration again.',
   }, 200)
 })
+
+
+
