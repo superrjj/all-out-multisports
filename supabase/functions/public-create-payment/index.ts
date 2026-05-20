@@ -1,13 +1,11 @@
 // @ts-nocheck
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { retrievePaymongoCheckoutSession } from '../_shared/paymongo-checkout-session.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const PAYMONGO_SECRET_KEY = Deno.env.get('PAYMONGO_SECRET_KEY')!
-
-/** Same window as admin stale purge: unpaid checkout must restart after this. */
-const PAYABLE_REGISTRATION_MAX_AGE_MS = 10 * 60 * 1000
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 const corsHeaders = {
@@ -115,14 +113,6 @@ Deno.serve(async (req) => {
     return textResponse('Registration is not payable in current status', 400)
   }
 
-  const createdMs = registration.created_at ? new Date(String(registration.created_at)).getTime() : 0
-  if (createdMs > 0 && Date.now() - createdMs > PAYABLE_REGISTRATION_MAX_AGE_MS) {
-    return textResponse(
-      'This registration checkout has expired. Please go back and submit a new registration to get a fresh payment link.',
-      400,
-    )
-  }
-
   const clientAmount = Number(body.amount ?? 0)
   const fallbackFee = Number(registration.registration_fee ?? 0)
   const resolvedAmount =
@@ -163,7 +153,7 @@ Deno.serve(async (req) => {
   // Reuse an in-flight order if one already exists for this registration.
   const { data: existingOrder, error: existingOrderError } = await supabase
     .from('payment_orders')
-    .select('id, merchant_reference, status, amount')
+    .select('id, merchant_reference, status, amount, paymongo_checkout_session_id')
     .eq('registration_id', body.registrationId)
     .in('status', ['created', 'pending', 'processing'])
     .order('created_at', { ascending: false })
@@ -174,6 +164,32 @@ Deno.serve(async (req) => {
   if (existingOrder?.id) {
     try {
       const reuseAmt = Number(existingOrder.amount ?? 0) || chargeAmount
+      const existingSessionId = String(existingOrder.paymongo_checkout_session_id ?? '').trim()
+      if (existingSessionId) {
+        const snap = await retrievePaymongoCheckoutSession(existingSessionId)
+        if (snap?.isPaid) {
+          return textResponse('This registration is already paid.', 400)
+        }
+        if (snap?.isActive && snap.checkoutUrl) {
+          return Response.json(
+            {
+              paymentOrderId: existingOrder.id,
+              merchantReference: existingOrder.merchant_reference,
+              checkoutUrl: snap.checkoutUrl,
+              checkoutSessionId: snap.id,
+              reused: true,
+            },
+            { headers: corsHeaders },
+          )
+        }
+        if (snap?.isExpired) {
+          return textResponse(
+            'Your PayMongo payment link has expired. Please go back to registration and start again.',
+            400,
+          )
+        }
+      }
+
       const checkout = await createPayMongoCheckoutSession({
         amount: reuseAmt,
         registrationId: body.registrationId,
@@ -198,7 +214,7 @@ Deno.serve(async (req) => {
           checkoutSessionId: checkout.checkoutSessionId,
           reused: true,
         },
-        { headers: corsHeaders }
+        { headers: corsHeaders },
       )
     } catch (e) {
       return textResponse((e as Error).message, 500)

@@ -93,7 +93,9 @@ Deno.serve(async (req) => {
     )
   }
 
-  if (String(reg.status ?? '').toLowerCase() !== 'confirmed') {
+  const regStatusLower = String(reg.status ?? '').toLowerCase()
+  const isOnsiteStyle = regStatusLower === 'onsite_cash' || regStatusLower === 'sponsored'
+  if (!isOnsiteStyle && regStatusLower !== 'confirmed') {
     const { error: confirmErr } = await supabase
       .from('registration_forms')
       .update({ status: 'confirmed', confirmed_at: now, updated_at: now })

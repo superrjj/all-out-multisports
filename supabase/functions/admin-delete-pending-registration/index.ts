@@ -2,12 +2,14 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { expirePaymongoSessionsForRegistrationRelatedOrders } from '../_shared/paymongo-checkout-expire.ts'
+import { retrievePaymongoCheckoutSession } from '../_shared/paymongo-checkout-session.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-const STALE_MS = 10 * 60 * 1000
+/** Abandoned before PayMongo: no checkout session yet — purge after 10 minutes. */
+const NO_SESSION_STALE_MS = 10 * 60 * 1000
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,7 +64,7 @@ async function registrationPaymentSnapshot(registrationId: string): Promise<{
 
   const { data: orders, error: ordersError } = await supabase
     .from('payment_orders')
-    .select('id, status, created_at')
+    .select('id, status, created_at, paymongo_checkout_session_id')
     .eq('registration_id', registrationId)
     .order('created_at', { ascending: false })
   if (ordersError) throw new Error(ordersError.message)
@@ -136,14 +138,38 @@ Deno.serve(async (req) => {
   }
 
   const now = Date.now()
-  const cutoff = new Date(now - STALE_MS).toISOString()
+  const noSessionCutoff = new Date(now - NO_SESSION_STALE_MS).toISOString()
 
-  /** Purge abandoned checkout rows older than 10 minutes (registration still in draft payment states). */
+  async function shouldPurgeUnpaidRegistration(registrationId: string, createdAt: string | null): Promise<boolean> {
+    const snap = await registrationPaymentSnapshot(registrationId)
+    if (!snap.reg) return false
+    if (!isDeletableUnpaidDraft(snap.payment_status, String(snap.reg.status ?? ''))) return false
+    if (String(snap.payment_status).toLowerCase() === 'paid') return false
+
+    const { data: orders } = await supabase
+      .from('payment_orders')
+      .select('paymongo_checkout_session_id, created_at')
+      .eq('registration_id', registrationId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    const sessionId = String(orders?.[0]?.paymongo_checkout_session_id ?? '').trim()
+    if (!sessionId) {
+      const createdMs = createdAt ? new Date(createdAt).getTime() : 0
+      return createdMs > 0 && now - createdMs > NO_SESSION_STALE_MS
+    }
+
+    const session = await retrievePaymongoCheckoutSession(sessionId)
+    if (!session) return true
+    if (session.isPaid) return false
+    return session.isExpired
+  }
+
+  /** Purge unpaid drafts when PayMongo session is expired (or missing after 10 min without checkout). */
   if (body.purgeStaleOnly === true) {
     const { data: candidates, error: cErr } = await supabase
       .from('registration_forms')
       .select('id, created_at, status')
-      .lt('created_at', cutoff)
       .in('status', ['pending_payment', 'payment_processing'])
     if (cErr) return jsonResponse({ error: cErr.message }, 500)
 
@@ -151,11 +177,10 @@ Deno.serve(async (req) => {
     const errors: string[] = []
     for (const row of candidates ?? []) {
       try {
-        const snap = await registrationPaymentSnapshot(String(row.id))
-        if (!snap.reg) continue
-        if (!isDeletableUnpaidDraft(snap.payment_status, String(snap.reg.status ?? ''))) continue
-        if (String(snap.payment_status).toLowerCase() === 'paid') continue
-        await deleteRegistrationCascade(String(row.id))
+        const rid = String(row.id)
+        const purge = await shouldPurgeUnpaidRegistration(rid, row.created_at ?? null)
+        if (!purge) continue
+        await deleteRegistrationCascade(rid)
         deleted += 1
       } catch (e) {
         errors.push(`${row.id}: ${(e as Error).message}`)
@@ -181,11 +206,30 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Paid registrations cannot be deleted here.' }, 400)
   }
 
-  if (ageMs > STALE_MS) {
+  const { data: latestOrder } = await supabase
+    .from('payment_orders')
+    .select('paymongo_checkout_session_id')
+    .eq('registration_id', registrationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const sessionId = String(latestOrder?.paymongo_checkout_session_id ?? '').trim()
+  if (sessionId) {
+    const session = await retrievePaymongoCheckoutSession(sessionId)
+    if (session?.isActive && !session.isPaid) {
+      return jsonResponse(
+        {
+          error:
+            'PayMongo checkout is still active. Wait until the payment link expires, or the rider must complete payment.',
+        },
+        400,
+      )
+    }
+  } else if (ageMs > NO_SESSION_STALE_MS) {
     return jsonResponse(
       {
         error:
-          'This pending entry is older than 10 minutes. It will be removed automatically on the next admin refresh, or run purge again.',
+          'This pending entry is older than 10 minutes without a PayMongo session. It will be removed on the next admin refresh.',
       },
       400,
     )
