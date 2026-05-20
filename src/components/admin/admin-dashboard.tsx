@@ -80,6 +80,105 @@ function pct(part: number, total: number) {
   return Math.round((part / total) * 100)
 }
 
+type FinisherShirtCounts = {
+  panels: Record<ShirtPanelKey, Record<(typeof SHIRT_SIZES)[number], number>>
+  totals: Record<ShirtPanelKey, number>
+}
+
+function escapeSpreadsheetXml(value: string | number): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function finisherShirtSpreadsheetRow(
+  cells: (string | number)[],
+  styleId: 'Header' | 'Default' | 'Total',
+  height: number,
+): string {
+  const cellXml = cells
+    .map((value) => {
+      if (typeof value === 'number') {
+        return `<Cell><Data ss:Type="Number">${value}</Data></Cell>`
+      }
+      return `<Cell><Data ss:Type="String">${escapeSpreadsheetXml(value)}</Data></Cell>`
+    })
+    .join('')
+  return `<Row ss:StyleID="${styleId}" ss:Height="${height}">${cellXml}</Row>`
+}
+
+function buildFinisherShirtSpreadsheetMl(shirtCounts: FinisherShirtCounts): string {
+  const rowParts: string[] = [
+    finisherShirtSpreadsheetRow(['Event Type', 'Size', 'Count'], 'Header', 22),
+  ]
+
+  SHIRT_PANELS.forEach((panel, panelIndex) => {
+    if (panelIndex > 0) {
+      rowParts.push('<Row ss:Height="14"/>')
+    }
+    for (const size of SHIRT_SIZES) {
+      rowParts.push(
+        finisherShirtSpreadsheetRow(
+          [panel.title, size, shirtCounts.panels[panel.key][size]],
+          'Default',
+          18,
+        ),
+      )
+    }
+    rowParts.push(
+      finisherShirtSpreadsheetRow(
+        [panel.title, 'TOTAL', shirtCounts.totals[panel.key]],
+        'Total',
+        18,
+      ),
+    )
+  })
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Header">
+   <Font ss:Bold="1" ss:Size="11"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Default">
+   <Font ss:Size="11"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Total">
+   <Font ss:Bold="1" ss:Size="11"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Finisher Shirt Status">
+  <Table>
+   <Column ss:Index="1" ss:Width="240"/>
+   <Column ss:Index="2" ss:Width="72"/>
+   <Column ss:Index="3" ss:Width="56"/>
+   ${rowParts.join('\n   ')}
+  </Table>
+ </Worksheet>
+</Workbook>`
+}
+
+function downloadFinisherShirtStatus(shirtCounts: FinisherShirtCounts) {
+  const xml = buildFinisherShirtSpreadsheetMl(shirtCounts)
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'finisher-shirt-status.xls'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function Shimmer({ className }: { className?: string }) {
   return (
     <div className={`relative overflow-hidden rounded-md bg-slate-200/80 ${className ?? ''}`}>
@@ -471,20 +570,7 @@ export function AdminDashboard() {
   )
 
   const handleExportShirts = () => {
-    const lines = ['Event Type,Size,Count']
-    for (const panel of SHIRT_PANELS) {
-      for (const size of SHIRT_SIZES) {
-        lines.push(`${panel.title},${size},${shirtCounts.panels[panel.key][size]}`)
-      }
-      lines.push(`${panel.title},TOTAL,${shirtCounts.totals[panel.key]}`)
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'finisher-shirt-status.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadFinisherShirtStatus(shirtCounts)
   }
 
   return (
