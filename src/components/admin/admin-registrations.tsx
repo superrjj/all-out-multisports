@@ -261,11 +261,22 @@ function isOnsiteCashPaymentReference(raw: string) {
   return /^ONSITE_CASH\d*$/i.test(v)
 }
 
-/** Reference is sufficient to assign a bib (PayMongo or onsite cash). */
+/** Free champion / complimentary entry (e.g. CHAMPION, CHAMPION3). */
+function isChampionPaymentReference(raw: string) {
+  const v = normalizePaymentReferenceDisplay(raw)
+  return /^CHAMPION\d*$/i.test(v)
+}
+
+/** Internal / non-PayMongo refs shown in Reference No. and used for bib assignment. */
+function isInternalPaymentReference(raw: string) {
+  return isOnsiteCashPaymentReference(raw) || isChampionPaymentReference(raw)
+}
+
+/** Reference is sufficient to assign a bib (PayMongo, onsite cash, or champion). */
 function isBibAssignablePaymentReference(raw: string) {
   const v = normalizePaymentReferenceDisplay(raw)
   if (!v) return false
-  return isPaymongoPaymentReferenceId(v) || isOnsiteCashPaymentReference(v)
+  return isPaymongoPaymentReferenceId(v) || isInternalPaymentReference(v)
 }
 
 /** Shown in Reference No. column and used to enable Generate bib. */
@@ -717,9 +728,9 @@ export function AdminRegistrations() {
 
   const getEffectiveProviderReference = (row: AdminRegistrationRow) => {
     const direct = normalizePaymentReferenceDisplay(String(row.provider_reference ?? ''))
-    if (direct.startsWith('pay_') || isOnsiteCashPaymentReference(direct)) return direct
+    if (direct.startsWith('pay_') || isInternalPaymentReference(direct)) return direct
     const merchant = normalizePaymentReferenceDisplay(String(row.merchant_reference ?? ''))
-    if (isOnsiteCashPaymentReference(merchant)) return merchant
+    if (isInternalPaymentReference(merchant)) return merchant
     const sid = extractTallySubmissionFromMerchantReference(String(row.merchant_reference ?? ''))
     if (!sid) return direct
     return sharedPayIdByTallySubmission.get(sid) ?? direct
@@ -1314,9 +1325,7 @@ export function AdminRegistrations() {
                   const dupKey = `${String(r.registrant_email ?? '').toLowerCase()}|${String(r.event_title ?? '')}|${String(r.race_category_id ?? r.age_category ?? '')}|${String(r.entry_event_type_label ?? '').toLowerCase()}`
                   const showDupWarning = !isPaid && duplicateNonPaidKeys.has(dupKey)
                   const providerRef = getEffectiveProviderReference(r)
-                  const referenceNo = isPaymongoPaymentReferenceId(providerRef)
-                    ? providerRef
-                    : ''
+                  const referenceNo = getDisplayPaymentReference(providerRef)
                   const qrEmailSent = Boolean(r.qr_cert_email_sent)
                   const qrEmailSentLabel = formatQrCertEmailSentAt(r.qr_cert_email_sent_at)
                   return (
@@ -1377,7 +1386,7 @@ export function AdminRegistrations() {
                                 ? undefined
                                 : isPaid
                                   ? undefined
-                                  : 'Usually shown after paid; generate manually when a payment reference (pay_... or ONSITE_CASH...) is set.'
+                                  : 'Usually shown after paid; generate manually when a payment reference (pay_..., ONSITE_CASH..., or CHAMPION...) is set.'
                             }
                           >
                             {String(r.bib_number ?? '').trim()
