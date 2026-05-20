@@ -479,39 +479,28 @@ export const adminApi = {
     return data as { ok: boolean; sent_count?: number; error?: string }
   },
 
-  /** Hard-delete one registration and related rows from the database (admin session + RLS). */
+  /**
+   * Hard-delete one registration (service role via edge function).
+   * Browser anon key cannot DELETE registration_forms — RLS has no admin DELETE policy.
+   */
   async adminDeleteRegistration(registrationId: string) {
     const rid = String(registrationId ?? '').trim()
     if (!rid) throw new Error('Missing registration id.')
 
-    const { data: reg, error: regErr } = await supabase.from('registration_forms').select('id').eq('id', rid).maybeSingle()
-    if (regErr) throw regErr
-    if (!reg?.id) throw new Error('Registration not found.')
+    const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
+      body: { registrationId: rid },
+    })
+    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not delete registration.'))
+    const bodyError = data && typeof data === 'object' ? String((data as { error?: string }).error ?? '').trim() : ''
+    if (bodyError) throw new Error(bodyError)
 
-    const { data: orders, error: oErr } = await supabase.from('payment_orders').select('id').eq('registration_id', rid)
-    if (oErr) throw oErr
-    const orderIds = (orders ?? []).map((o) => o.id).filter(Boolean)
-    if (orderIds.length > 0) {
-      const { error: txDelErr } = await supabase.from('payment_transactions').delete().in('payment_order_id', orderIds)
-      if (txDelErr) throw txDelErr
+    const { data: still, error: checkErr } = await supabase.from('registration_forms').select('id').eq('id', rid).maybeSingle()
+    if (checkErr) throw checkErr
+    if (still?.id) {
+      throw new Error(
+        'Registration still exists in the database. Deploy the admin-delete-pending-registration edge function, or add admin DELETE RLS policies.',
+      )
     }
-
-    const relatedTables = [
-      'notification_deliveries',
-      'qr_checkins',
-      'race_results',
-      'race_bibs',
-      'payment_orders',
-      'registration_agreements',
-      'registration_rider_details',
-    ] as const
-    for (const table of relatedTables) {
-      const { error } = await supabase.from(table).delete().eq('registration_id', rid)
-      if (error) throw error
-    }
-
-    const { error: rfErr } = await supabase.from('registration_forms').delete().eq('id', rid)
-    if (rfErr) throw rfErr
     return { ok: true as const }
   },
 
