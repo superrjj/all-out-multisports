@@ -43,7 +43,7 @@ function normalizePaymentStatus(args: { orderStatus?: string | null; txStatus?: 
   const reg = String(args.registrationStatus ?? '').toLowerCase()
   const s = tx || order
   if (['paid', 'succeeded', 'success', 'completed', 'complete', 'confirmed'].includes(s)) return 'paid'
-  if (reg === 'confirmed') return 'paid'
+  if (reg === 'confirmed' || reg === 'onsite_cash' || reg === 'sponsored') return 'paid'
   if (['pending', 'processing', 'created'].includes(s)) return 'pending'
   if (['failed', 'cancelled', 'canceled', 'expired'].includes(s)) return 'failed'
   if (['refunded'].includes(s)) return 'refunded'
@@ -92,10 +92,11 @@ async function registrationPaymentSnapshot(registrationId: string): Promise<{
 
 function isDeletableUnpaidDraft(payment_status: string, regStatus: string): boolean {
   const ps = String(payment_status ?? '').toLowerCase()
-  if (ps === 'paid') return false
-  if (ps === 'pending') return true
   const st = String(regStatus ?? '').toLowerCase()
-  if (['pending_payment', 'payment_processing'].includes(st) && ps === 'unknown') return true
+  if (['onsite_cash', 'sponsored', 'confirmed'].includes(st)) return false
+  if (ps === 'paid' || ps === 'refunded') return false
+  if (['pending_payment', 'payment_processing'].includes(st)) return true
+  if (ps === 'pending' || ps === 'failed' || ps === 'unknown') return true
   return false
 }
 
@@ -109,12 +110,21 @@ async function deleteRegistrationCascade(registrationId: string): Promise<void> 
     const { error: txDelErr } = await supabase.from('payment_transactions').delete().in('payment_order_id', orderIds)
     if (txDelErr) throw new Error(txDelErr.message)
   }
-  const { error: poErr } = await supabase.from('payment_orders').delete().eq('registration_id', registrationId)
-  if (poErr) throw new Error(poErr.message)
-  const { error: agErr } = await supabase.from('registration_agreements').delete().eq('registration_id', registrationId)
-  if (agErr) throw new Error(agErr.message)
-  const { error: rdErr } = await supabase.from('registration_rider_details').delete().eq('registration_id', registrationId)
-  if (rdErr) throw new Error(rdErr.message)
+
+  const relatedDeletes: Array<PromiseLike<{ error: { message: string } | null }>> = [
+    supabase.from('notification_deliveries').delete().eq('registration_id', registrationId),
+    supabase.from('qr_checkins').delete().eq('registration_id', registrationId),
+    supabase.from('race_results').delete().eq('registration_id', registrationId),
+    supabase.from('race_bibs').delete().eq('registration_id', registrationId),
+    supabase.from('payment_orders').delete().eq('registration_id', registrationId),
+    supabase.from('registration_agreements').delete().eq('registration_id', registrationId),
+    supabase.from('registration_rider_details').delete().eq('registration_id', registrationId),
+  ]
+  for (const op of relatedDeletes) {
+    const { error } = await op
+    if (error) throw new Error(error.message)
+  }
+
   const { error: rfErr } = await supabase.from('registration_forms').delete().eq('id', registrationId)
   if (rfErr) throw new Error(rfErr.message)
 }
@@ -192,52 +202,13 @@ Deno.serve(async (req) => {
   const registrationId = String(body.registrationId ?? '').trim()
   if (!registrationId) return jsonResponse({ error: 'Missing registrationId' }, 400)
 
-  const snap = await registrationPaymentSnapshot(registrationId)
-  if (!snap.reg) return jsonResponse({ error: 'Registration not found.' }, 404)
-
-  const createdMs = snap.reg.created_at ? new Date(snap.reg.created_at).getTime() : 0
-  const ageMs = now - createdMs
-
-  if (!isDeletableUnpaidDraft(snap.payment_status, String(snap.reg.status ?? ''))) {
-    return jsonResponse({ error: 'Only unpaid / pending checkout registrations can be deleted.' }, 400)
-  }
-
-  if (String(snap.payment_status).toLowerCase() === 'paid') {
-    return jsonResponse({ error: 'Paid registrations cannot be deleted here.' }, 400)
-  }
-
-  const { data: latestOrder } = await supabase
-    .from('payment_orders')
-    .select('paymongo_checkout_session_id')
-    .eq('registration_id', registrationId)
-    .order('created_at', { ascending: false })
-    .limit(1)
+  const { data: reg, error: regErr } = await supabase
+    .from('registration_forms')
+    .select('id')
+    .eq('id', registrationId)
     .maybeSingle()
-  const sessionId = String(latestOrder?.paymongo_checkout_session_id ?? '').trim()
-  if (sessionId) {
-    const session = await retrievePaymongoCheckoutSession(sessionId)
-    if (session?.isActive && !session.isPaid) {
-      return jsonResponse(
-        {
-          error:
-            'PayMongo checkout is still active. Wait until the payment link expires, or the rider must complete payment.',
-        },
-        400,
-      )
-    }
-  } else if (ageMs > NO_SESSION_STALE_MS) {
-    return jsonResponse(
-      {
-        error:
-          'This pending entry is older than 10 minutes without a PayMongo session. It will be removed on the next admin refresh.',
-      },
-      400,
-    )
-  }
-
-  if (String(snap.reg.bib_number ?? '').trim()) {
-    return jsonResponse({ error: 'Cannot delete a registration that already has a bib number.' }, 400)
-  }
+  if (regErr) return jsonResponse({ error: regErr.message }, 500)
+  if (!reg?.id) return jsonResponse({ error: 'Registration not found.' }, 404)
 
   try {
     await deleteRegistrationCascade(registrationId)

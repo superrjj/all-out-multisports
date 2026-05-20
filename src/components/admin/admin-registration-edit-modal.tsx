@@ -76,6 +76,8 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
   const [paymentOrderId, setPaymentOrderId] = useState('')
   const [eventTypeOptions, setEventTypeOptions] = useState<EventTypeOption[]>([])
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([])
+  /** Assigned category row (includes inactive) so the dropdown can show the current value. */
+  const [assignedCategory, setAssignedCategory] = useState<CategoryOption | null>(null)
 
   useEffect(() => {
     let active = true
@@ -90,14 +92,54 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
         const reg = details.registration
         const rider = details.rider
         const order = details.paymentOrder
-        setEventId(String((reg as { event_id?: string | null }).event_id ?? ''))
+        const eventIdNext = String((reg as { event_id?: string | null }).event_id ?? '')
+        setEventId(eventIdNext)
         setPaymentOrderId(String(order?.id ?? ''))
+        setAssignedCategory(null)
+
+        let raceCategoryId = String((reg as { race_category_id?: string | null }).race_category_id ?? '').trim()
+        let assignedCat: CategoryOption | null = null
+
+        if (raceCategoryId) {
+          const { data: catRow, error: catErr } = await supabase
+            .from('race_categories')
+            .select('id, category_name, discipline')
+            .eq('id', raceCategoryId)
+            .maybeSingle()
+          if (catErr) throw catErr
+          if (catRow?.id) assignedCat = catRow as CategoryOption
+        } else if (eventIdNext) {
+          const ageLabel = String(rider?.age_category ?? '').trim()
+          const disciplineLabel = String(rider?.discipline ?? '').trim()
+          if (ageLabel) {
+            let q = supabase
+              .from('race_categories')
+              .select('id, category_name, discipline')
+              .eq('event_id', eventIdNext)
+            if (disciplineLabel) q = q.eq('discipline', disciplineLabel)
+            const { data: matches, error: matchErr } = await q
+            if (matchErr) throw matchErr
+            const found =
+              (matches ?? []).find(
+                (c) => String(c.category_name ?? '').trim().toLowerCase() === ageLabel.toLowerCase(),
+              ) ?? (matches ?? [])[0]
+            if (found?.id) {
+              raceCategoryId = String(found.id)
+              assignedCat = found as CategoryOption
+            }
+          }
+        }
+
+        if (assignedCat) setAssignedCategory(assignedCat)
+
+        const providerRef = String(order?.provider_reference ?? '').trim()
+        const merchantRef = String(order?.merchant_reference ?? '').trim()
 
         setForm({
           registrantEmail: String(reg.registrant_email ?? ''),
           entryEventTypeSlug: String((reg.entry_event_type_slug ?? '') || ''),
           entryEventTypeLabel: String(reg.entry_event_type_label ?? ''),
-          raceCategoryId: String((reg as { race_category_id?: string | null }).race_category_id ?? ''),
+          raceCategoryId,
           firstName: String(rider?.first_name ?? ''),
           lastName: String(rider?.last_name ?? ''),
           gender: String(rider?.gender ?? ''),
@@ -108,7 +150,7 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
           emergencyContactNumber: String(rider?.emergency_contact_number ?? ''),
           teamName: String(rider?.team_name ?? ''),
           jerseySize: String(rider?.jersey_size ?? ''),
-          providerReference: String(order?.provider_reference ?? ''),
+          providerReference: providerRef || merchantRef,
           paymentOrderStatus: String(order?.status ?? ''),
         })
       } catch (e) {
@@ -159,7 +201,16 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
     }
   }, [eventId])
 
-  const categoryById = useMemo(() => new Map(categoryOptions.map((c) => [c.id, c])), [categoryOptions])
+  const categoryOptionsForSelect = useMemo(() => {
+    if (!assignedCategory) return categoryOptions
+    if (categoryOptions.some((c) => c.id === assignedCategory.id)) return categoryOptions
+    return [assignedCategory, ...categoryOptions]
+  }, [categoryOptions, assignedCategory])
+
+  const categoryById = useMemo(
+    () => new Map(categoryOptionsForSelect.map((c) => [c.id, c])),
+    [categoryOptionsForSelect],
+  )
 
   const genderOptions = [
     { value: 'MALE', label: 'MALE' },
@@ -272,7 +323,7 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
                     onChange={(v) => {
                       update('raceCategoryId', v)
                     }}
-                    options={categoryOptions.map((c) => ({
+                    options={categoryOptionsForSelect.map((c) => ({
                       value: c.id,
                       label: `${String(c.category_name ?? '—')} · ${String(c.discipline ?? '—')}`,
                     }))}

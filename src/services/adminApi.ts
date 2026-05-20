@@ -26,6 +26,8 @@ export interface AdminRegistrationRow {
   paid_at?: string | null
   user_id?: string | null
   race_category_id?: string | null
+  qr_cert_email_sent?: boolean
+  qr_cert_email_sent_at?: string | null
 }
 
 export interface AdminRiderDetailRow {
@@ -96,6 +98,10 @@ function extractTallyImportSubmissionId(merchantReference: string | null | undef
   const mr = String(merchantReference ?? '')
   const m = mr.match(/^tally-import-(.+)-(criterium|individual-time-trial)$/)
   return m ? m[1] : null
+}
+
+function normalizeRegistrantEmail(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase()
 }
 
 function normalizePaymentStatus(args: { orderStatus?: string | null; txStatus?: string | null; registrationStatus?: string | null }): PaymentStatus {
@@ -249,6 +255,32 @@ export const adminApi = {
       }
     }
 
+    const emailByRegId = new Map(
+      base.map((f) => [f.id, normalizeRegistrantEmail(f.registrant_email)] as const),
+    )
+    const qrCertSentAtByReg = new Map<string, string>()
+    if (registrationIds.length > 0) {
+      const { data: deliveries, error: deliveriesErr } = await supabase
+        .from('notification_deliveries')
+        .select('registration_id, recipient, sent_at, created_at')
+        .in('registration_id', registrationIds)
+        .eq('channel', 'email')
+        .eq('status', 'sent')
+        .order('created_at', { ascending: false })
+      if (deliveriesErr) {
+        console.warn('[adminApi.registrationsList] notification_deliveries', deliveriesErr.message)
+      } else {
+        for (const row of deliveries ?? []) {
+          const rid = String(row.registration_id ?? '').trim()
+          if (!rid || qrCertSentAtByReg.has(rid)) continue
+          const expectedEmail = emailByRegId.get(rid) ?? ''
+          if (!expectedEmail || normalizeRegistrantEmail(row.recipient) !== expectedEmail) continue
+          const at = String(row.sent_at ?? row.created_at ?? '').trim()
+          if (at) qrCertSentAtByReg.set(rid, at)
+        }
+      }
+    }
+
     return base.map((f) => {
       const order = latestOrderByReg.get(f.id)
       const tx = order ? latestTxByOrder.get(order.id) : undefined
@@ -290,6 +322,8 @@ export const adminApi = {
         paid_at: tx?.paid_at ?? null,
         user_id: f.user_id ?? null,
         race_category_id: f.race_category_id ?? null,
+        qr_cert_email_sent: qrCertSentAtByReg.has(f.id),
+        qr_cert_email_sent_at: qrCertSentAtByReg.get(f.id) ?? null,
       } satisfies AdminRegistrationRow
     })
   },
@@ -445,13 +479,45 @@ export const adminApi = {
     return data as { ok: boolean; sent_count?: number; error?: string }
   },
 
-  /** Hard-delete a single unpaid checkout row; server enforces pending rules and 10-minute window. */
+  /** Hard-delete one registration and related rows from the database (admin session + RLS). */
+  async adminDeleteRegistration(registrationId: string) {
+    const rid = String(registrationId ?? '').trim()
+    if (!rid) throw new Error('Missing registration id.')
+
+    const { data: reg, error: regErr } = await supabase.from('registration_forms').select('id').eq('id', rid).maybeSingle()
+    if (regErr) throw regErr
+    if (!reg?.id) throw new Error('Registration not found.')
+
+    const { data: orders, error: oErr } = await supabase.from('payment_orders').select('id').eq('registration_id', rid)
+    if (oErr) throw oErr
+    const orderIds = (orders ?? []).map((o) => o.id).filter(Boolean)
+    if (orderIds.length > 0) {
+      const { error: txDelErr } = await supabase.from('payment_transactions').delete().in('payment_order_id', orderIds)
+      if (txDelErr) throw txDelErr
+    }
+
+    const relatedTables = [
+      'notification_deliveries',
+      'qr_checkins',
+      'race_results',
+      'race_bibs',
+      'payment_orders',
+      'registration_agreements',
+      'registration_rider_details',
+    ] as const
+    for (const table of relatedTables) {
+      const { error } = await supabase.from(table).delete().eq('registration_id', rid)
+      if (error) throw error
+    }
+
+    const { error: rfErr } = await supabase.from('registration_forms').delete().eq('id', rid)
+    if (rfErr) throw rfErr
+    return { ok: true as const }
+  },
+
+  /** Alias for manual delete from Registrations UI. */
   async adminDeletePendingRegistration(registrationId: string) {
-    const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
-      body: { registrationId },
-    })
-    if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not delete registration.'))
-    return data as { ok?: boolean; error?: string }
+    return this.adminDeleteRegistration(registrationId)
   },
 
   /** Removes abandoned `pending_payment` / `payment_processing` registrations older than 10 minutes (service-side rules). */
