@@ -1,45 +1,92 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { TooltipItem } from 'chart.js'
 import {
   Chart as ChartJS,
+  ArcElement,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
-  BarElement,
   Tooltip,
   Legend,
   Filler,
 } from 'chart.js'
-import { Line, Bar } from 'react-chartjs-2'
+import { Doughnut, Line } from 'react-chartjs-2'
 import {
   Bike,
-  CalendarDays,
-  ClipboardList,
-  CreditCard,
-  FileBarChart,
-  Megaphone,
-  QrCode,
-  Settings,
-  TrendingUp,
-  Upload,
+  Check,
+  ChevronDown,
+  Download,
+  Hourglass,
+  Info,
+  Shirt,
+  UserRound,
   Users,
 } from 'lucide-react'
 import { adminApi, type AdminRegistrationRow } from '../../services/adminApi'
 import { supabase } from '../../lib/supabase'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
+ChartJS.register(ArcElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
 
-// ─── Shimmer Primitives ───────────────────────────────────────────────────────
+const SHIRT_SIZES = ['XS', 'Small', 'Medium', 'Large', 'XL'] as const
 
-function SkeletonBlock({ className }: { className?: string }) {
+const SHIRT_PANELS = [
+  {
+    key: 'criterium' as const,
+    title: 'FINISHER SHIRT (CRITERIUM)',
+    theme: 'purple' as const,
+  },
+  {
+    key: 'itt' as const,
+    title: 'FINISHER SHIRT (INDIVIDUAL TIME TRIAL)',
+    theme: 'blue' as const,
+  },
+]
+
+type ShirtPanelKey = (typeof SHIRT_PANELS)[number]['key']
+type TimeRange = '7d' | '30d' | '12m'
+
+function normalizeShirtSize(raw: string | null | undefined): (typeof SHIRT_SIZES)[number] | null {
+  const s = String(raw ?? '').trim().toLowerCase()
+  if (!s) return null
+  if (s === 'extra small' || s === 'xs' || s === 'x-small') return 'XS'
+  if (s === 'small' || s === 's') return 'Small'
+  if (s === 'medium' || s === 'm') return 'Medium'
+  if (s === 'large' || s === 'l') return 'Large'
+  if (s === 'extra large' || s === 'xl' || s === 'x-large') return 'XL'
+  return null
+}
+
+function shirtPanelKey(row: AdminRegistrationRow): ShirtPanelKey | null {
+  const slug = String(row.entry_event_type_slug ?? '').toLowerCase()
+  const label = String(row.entry_event_type_label ?? '').toLowerCase()
+  const blob = `${slug} ${label}`
+  if (blob.includes('criterium')) return 'criterium'
+  if (blob.includes('itt') || blob.includes('individual-time-trial') || blob.includes('time trial')) return 'itt'
+  return null
+}
+
+function isPaid(row: AdminRegistrationRow) {
+  return String(row.payment_status ?? '').toLowerCase() === 'paid'
+}
+
+function isPending(row: AdminRegistrationRow) {
+  const s = String(row.payment_status ?? '').toLowerCase()
+  return s === 'pending' || s === 'pending_payment' || s === 'processing'
+}
+
+function pct(part: number, total: number) {
+  if (total <= 0) return 0
+  return Math.round((part / total) * 100)
+}
+
+function Shimmer({ className }: { className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-md bg-slate-200 ${className ?? ''}`}>
+    <div className={`relative overflow-hidden rounded-md bg-slate-200/80 ${className ?? ''}`}>
       <div
         className="absolute inset-0 bg-gradient-to-r from-transparent via-white/70 to-transparent"
         style={{
-          animation: 'shimmer 2s ease-in-out infinite',
+          animation: 'admin-dashboard-shimmer 2s ease-in-out infinite',
           transform: 'translateX(-100%)',
           backgroundSize: '200% 100%',
         }}
@@ -50,424 +97,221 @@ function SkeletonBlock({ className }: { className?: string }) {
 
 function StatCardSkeleton() {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 space-y-2">
-          <SkeletonBlock className="h-3 w-24" />
-          <SkeletonBlock className="h-7 w-20" />
-          <SkeletonBlock className="h-3 w-32" />
-        </div>
-        <SkeletonBlock className="h-11 w-11 rounded-xl" />
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+      <Shimmer className="mb-4 h-10 w-10 rounded-full" />
+      <Shimmer className="mb-2 h-3 w-28" />
+      <Shimmer className="mb-3 h-8 w-16" />
+      <Shimmer className="h-3 w-36" />
+    </div>
+  )
+}
+
+function ShirtPanelSkeleton({ theme }: { theme: 'purple' | 'blue' }) {
+  const footerBg = theme === 'purple' ? 'bg-violet-50' : 'bg-sky-50'
+  return (
+    <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-white">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
+        <Shimmer className="h-4 w-4 rounded" />
+        <Shimmer className="h-3.5 w-44 max-w-full" />
       </div>
-    </div>
-  )
-}
-
-function ChartSkeleton() {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <SkeletonBlock className="mb-4 h-4 w-36" />
-      <SkeletonBlock className="h-48 w-full rounded-lg" />
-    </div>
-  )
-}
-
-function TableRowSkeleton() {
-  return (
-    <tr>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2">
-          <SkeletonBlock className="h-8 w-8 rounded-full" />
-          <SkeletonBlock className="h-3 w-24" />
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <SkeletonBlock className="h-3 w-20" />
-      </td>
-      <td className="px-4 py-3">
-        <SkeletonBlock className="h-5 w-14 rounded-full" />
-      </td>
-      <td className="px-4 py-3">
-        <SkeletonBlock className="h-3 w-16" />
-      </td>
-    </tr>
-  )
-}
-
-function EventItemSkeleton() {
-  return (
-    <li className="flex gap-3 rounded-lg p-2">
-      <SkeletonBlock className="h-12 w-12 shrink-0 rounded-lg" />
-      <div className="flex-1 space-y-2">
-        <SkeletonBlock className="h-3 w-32" />
-        <SkeletonBlock className="h-3 w-20" />
-        <SkeletonBlock className="h-3 w-24" />
-      </div>
-      <SkeletonBlock className="h-5 w-14 rounded-full" />
-    </li>
-  )
-}
-
-function AnnouncementItemSkeleton() {
-  return (
-    <li className="flex gap-3 rounded-lg p-2">
-      <SkeletonBlock className="h-12 w-12 shrink-0 rounded-lg" />
-      <div className="flex-1 space-y-2">
-        <SkeletonBlock className="h-3 w-36" />
-        <SkeletonBlock className="h-3 w-full" />
-        <SkeletonBlock className="h-3 w-16" />
-      </div>
-    </li>
-  )
-}
-
-// ─── Stat Card ────────────────────────────────────────────────────────────────
-
-function StatCard({
-  label,
-  value,
-  trend,
-  icon: Icon,
-  iconBg,
-}: {
-  label: string
-  value: string
-  trend: string
-  icon: typeof Users
-  iconBg: string
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-[26px]">{value}</p>
-          <p className="mt-1 flex items-center gap-1 text-xs font-medium text-slate-600">
-            <TrendingUp className="h-3.5 w-3.5" />
-            {trend}
-          </p>
-        </div>
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconBg}`}>
-          <Icon className="h-5 w-5 text-white" strokeWidth={2} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ChartPlaceholder({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="mt-4 h-48 rounded-lg bg-slate-50/80">{children}</div>
-    </div>
-  )
-}
-
-const lineChartOptionsBase = {
-  responsive: true,
-  maintainAspectRatio: false,
-  interaction: { mode: 'index' as const, intersect: false },
-  plugins: { legend: { display: false } },
-  scales: {
-    x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
-    y: { beginAtZero: true },
-  },
-}
-
-function MonthlyRegistrationsChartJs({ labels, data }: { labels: string[]; data: number[] }) {
-  const empty = data.every((p) => p === 0)
-  const chartData = useMemo(
-    () => ({
-      labels,
-      datasets: [
-        {
-          label: 'Registrations',
-          data,
-          borderColor: '#1e4a8e',
-          backgroundColor: 'rgba(30, 74, 142, 0.12)',
-          fill: true,
-          tension: 0.35,
-          pointRadius: 3,
-          pointBackgroundColor: '#1e4a8e',
-        },
-      ],
-    }),
-    [labels, data],
-  )
-  const options = useMemo(
-    () => ({
-      ...lineChartOptionsBase,
-      scales: {
-        ...lineChartOptionsBase.scales,
-        y: { beginAtZero: true, ticks: { precision: 0 } },
-      },
-    }),
-    [],
-  )
-  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
-  return (
-    <div className="h-full min-h-[12rem] w-full">
-      <Line data={chartData} options={options} />
-    </div>
-  )
-}
-
-function RevenueChartJs({ labels, data }: { labels: string[]; data: number[] }) {
-  const empty = data.every((p) => p === 0)
-  const chartData = useMemo(
-    () => ({
-      labels,
-      datasets: [
-        {
-          label: 'Revenue',
-          data,
-          borderColor: '#0d9488',
-          backgroundColor: 'rgba(13, 148, 136, 0.15)',
-          fill: true,
-          tension: 0.35,
-          pointRadius: 3,
-          pointBackgroundColor: '#0d9488',
-        },
-      ],
-    }),
-    [labels, data],
-  )
-  const options = useMemo(
-    () => ({
-      ...lineChartOptionsBase,
-      plugins: {
-        ...lineChartOptionsBase.plugins,
-        tooltip: {
-          callbacks: {
-            label: (item: TooltipItem<'line'>) =>
-              `₱${Number(item.parsed.y ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`,
-          },
-        },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
-        y: {
-          beginAtZero: true,
-          ticks: {
-            callback: (value: string | number) =>
-              `₱${Number(value).toLocaleString('en-PH', { maximumFractionDigits: 0 })}`,
-          },
-        },
-      },
-    }),
-    [],
-  )
-  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
-  return (
-    <div className="h-full min-h-[12rem] w-full">
-      <Line data={chartData} options={options} />
-    </div>
-  )
-}
-
-function EventParticipationBarChartJs({
-  labels,
-  data,
-  usePercentScale,
-}: {
-  labels: string[]
-  data: number[]
-  usePercentScale: boolean
-}) {
-  const empty = labels.length === 0
-  const chartData = useMemo(
-    () => ({
-      labels,
-      datasets: [
-        {
-          label: usePercentScale ? 'Capacity filled' : 'Registrations',
-          data,
-          backgroundColor: 'rgba(99, 102, 241, 0.85)',
-          borderRadius: 4,
-        },
-      ],
-    }),
-    [labels, data, usePercentScale],
-  )
-  const options = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxRotation: 45, autoSkip: true } },
-        y: usePercentScale
-          ? {
-              beginAtZero: true,
-              max: 100,
-              ticks: {
-                callback: (value: string | number) => `${value}%`,
-              },
-            }
-          : { beginAtZero: true, ticks: { precision: 0 } },
-      },
-    }),
-    [usePercentScale],
-  )
-  if (empty) return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
-  return (
-    <div className="h-full min-h-[12rem] w-full">
-      <Bar data={chartData} options={options} />
-    </div>
-  )
-}
-
-function DonutCategory({ segments, total }: { segments: Array<{ label: string; pct: number; color: string }>; total: number }) {
-  if (segments.length === 0 || total === 0) {
-    return <p className="flex h-full items-center justify-center text-xs text-slate-500">No data yet.</p>
-  }
-  let acc = 0
-  const gradientStops = segments
-    .map((s) => {
-      const start = acc
-      acc += s.pct
-      return `${s.color} ${start}% ${acc}%`
-    })
-    .join(', ')
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-2 sm:flex-row sm:gap-6">
-      <div
-        className="relative h-28 w-28 shrink-0 rounded-full"
-        style={{
-          background: `conic-gradient(${gradientStops})`,
-        }}
-      >
-        <div className="absolute inset-[18%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-          <span className="text-lg font-bold text-slate-900">{total.toLocaleString()}</span>
-          <span className="text-[10px] text-slate-500">total</span>
-        </div>
-      </div>
-      <ul className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:block">
-        {segments.map((s) => (
-          <li key={s.label} className="flex items-center gap-2 text-slate-700">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
-            {s.label} ({s.pct}%)
+      <ul className="flex-1 divide-y divide-slate-100 px-4 py-1">
+        {SHIRT_SIZES.map((size) => (
+          <li key={size} className="flex items-center justify-between py-2.5">
+            <Shimmer className="h-4 w-14" />
+            <Shimmer className="h-4 w-8" />
           </li>
         ))}
       </ul>
+      <div className={`flex items-center justify-between px-4 py-3.5 ${footerBg}`}>
+        <div className="space-y-2">
+          <Shimmer className="h-4 w-20" />
+          <Shimmer className="h-9 w-16" />
+        </div>
+        <Shimmer className="h-10 w-10 rounded-lg" />
+      </div>
     </div>
   )
 }
 
-const quickActions = [
-  { label: 'Create Event', to: '/admin/events', icon: CalendarDays },
-  { label: 'Manage Registrations', to: '/admin/registrations', icon: ClipboardList },
-  { label: 'View Payments', to: '/admin/payments', icon: CreditCard },
-  { label: 'QR Code Race Kit', to: '/admin/qr-code-race-kit', icon: QrCode },
-  { label: 'Upload Results', to: '/admin/results', icon: Upload },
-  { label: 'Create Announcement', to: '/admin/announcements', icon: Megaphone },
-  { label: 'View Reports', to: '/admin/reports', icon: FileBarChart },
-  { label: 'System Settings', to: '/admin/settings', icon: Settings },
-] as const
-
-function initialsFromEmail(email: string) {
-  const local = email.split('@')[0] ?? '?'
-  return local.slice(0, 2).toUpperCase()
+function FinisherShirtSectionSkeleton() {
+  return (
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm xl:col-span-8">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <Shimmer className="h-5 w-56 max-w-full" />
+          <Shimmer className="h-4 w-72 max-w-full" />
+        </div>
+        <Shimmer className="h-9 w-24 rounded-lg" />
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ShirtPanelSkeleton theme="purple" />
+        <ShirtPanelSkeleton theme="blue" />
+      </div>
+      <Shimmer className="mt-4 h-12 w-full rounded-xl" />
+    </div>
+  )
 }
 
-function riderDisplayName(row: AdminRegistrationRow) {
-  const name = row.rider_full_name?.trim()
-  if (name) return name
-  return row.registrant_email?.trim() ?? '—'
+function GoblinCardSkeleton() {
+  return (
+    <div className="h-full min-h-[280px] overflow-hidden rounded-2xl border border-amber-100 bg-[#fff9eb] shadow-sm">
+      <Shimmer className="h-full min-h-[280px] w-full rounded-2xl" />
+    </div>
+  )
 }
 
-function riderAvatarInitials(row: AdminRegistrationRow) {
-  const name = row.rider_full_name?.trim()
-  if (name) {
-    const parts = name.split(/\s+/).filter(Boolean)
-    if (parts.length >= 2) return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase()
-    return name.slice(0, 2).toUpperCase()
-  }
-  if (row.registrant_email) return initialsFromEmail(row.registrant_email)
-  return '—'
+function LineChartCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Shimmer className="h-5 w-44" />
+        <Shimmer className="h-9 w-28 rounded-lg" />
+      </div>
+      <Shimmer className="h-56 w-full rounded-lg" />
+    </div>
+  )
 }
 
-function statusPill(status: string) {
-  const s = status.toLowerCase()
-  if (s === 'paid') return 'bg-emerald-100 text-emerald-800'
-  if (s === 'pending' || s === 'pending_payment') return 'bg-amber-100 text-amber-800'
-  if (s === 'failed') return 'bg-rose-100 text-rose-800'
-  return 'bg-slate-100 text-slate-700'
+function DonutChartCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <Shimmer className="h-5 w-44" />
+        <Shimmer className="h-9 w-32 rounded-lg" />
+      </div>
+      <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+        <Shimmer className="mx-auto h-44 w-44 shrink-0 rounded-full" />
+        <ul className="min-w-0 w-full flex-1 space-y-2.5">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i} className="flex items-center justify-between gap-2">
+              <Shimmer className="h-4 max-w-[200px] flex-1" />
+              <Shimmer className="h-4 w-16 shrink-0" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+function StatCard({
+  title,
+  value,
+  icon,
+  iconWrap,
+  footerTo,
+  footerLabel,
+  badge,
+  extraIcon,
+}: {
+  title: string
+  value: string
+  icon: React.ReactNode
+  iconWrap: string
+  footerTo: string
+  footerLabel: string
+  badge?: { text: string; className: string }
+  extraIcon?: React.ReactNode
+}) {
+  return (
+    <div className="relative rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+      {badge ? (
+        <span className={`absolute right-4 top-4 rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.className}`}>
+          {badge.text}
+        </span>
+      ) : null}
+      {extraIcon ? <div className="absolute right-4 top-4 text-violet-400">{extraIcon}</div> : null}
+      <div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-full ${iconWrap}`}>{icon}</div>
+      <p className="text-sm font-medium text-slate-500">{title}</p>
+      <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">{value}</p>
+      <Link to={footerTo} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-[#1e4a8e]">
+        {footerLabel}
+        <span aria-hidden>→</span>
+      </Link>
+    </div>
+  )
+}
+
+function ShirtPanel({
+  title,
+  theme,
+  counts,
+  total,
+  loading,
+}: {
+  title: string
+  theme: 'purple' | 'blue'
+  counts: Record<(typeof SHIRT_SIZES)[number], number>
+  total: number
+  loading: boolean
+}) {
+  const isPurple = theme === 'purple'
+  const headerIcon = isPurple ? 'text-violet-500' : 'text-sky-500'
+  const footerBg = isPurple ? 'bg-violet-50' : 'bg-sky-50'
+  const footerText = isPurple ? 'text-violet-700' : 'text-sky-700'
+  const footerIcon = isPurple ? 'text-violet-400' : 'text-sky-400'
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200/80 bg-white">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
+        <Shirt className={`h-4 w-4 ${headerIcon}`} strokeWidth={2} />
+        <p className="text-xs font-bold tracking-wide text-slate-800">{title}</p>
+      </div>
+      <ul className="flex-1 divide-y divide-slate-100 px-4 py-1">
+        {SHIRT_SIZES.map((size) => (
+          <li key={size} className="flex items-center justify-between py-2.5 text-sm">
+            <span className="font-medium text-slate-700">{size}</span>
+            <span className="tabular-nums font-semibold text-slate-900">
+              {loading ? '—' : counts[size].toLocaleString()}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className={`flex items-center justify-between px-4 py-3 ${footerBg}`}>
+        <div>
+          <p className="text-sm font-medium text-slate-600">Total shirts</p>
+          <p className={`mt-0.5 text-3xl font-semibold tabular-nums tracking-tight ${footerText}`}>
+            {loading ? '—' : total.toLocaleString()}
+          </p>
+        </div>
+        <Shirt className={`h-10 w-10 ${footerIcon}`} strokeWidth={1.5} />
+      </div>
+    </div>
+  )
+}
+
+function WarehouseGoblinCard() {
+  return (
+    <div className="h-full min-h-[280px] overflow-hidden rounded-2xl border border-amber-100 bg-[#fff9eb] shadow-sm">
+      <img src="/goblin-tshirt.png" alt="" className="h-full w-full object-cover object-center" />
+    </div>
+  )
 }
 
 export function AdminDashboard() {
   const [rows, setRows] = useState<AdminRegistrationRow[]>([])
-  const [events, setEvents] = useState<
-    Array<{
-      id: string
-      title: string | null
-      event_date: string | null
-      status: string | null
-      rider_limit: number | null
-      poster_url: string | null
-      banner_url: string | null
-    }>
-  >([])
-  const [announcements, setAnnouncements] = useState<Array<{ id: string; title: string | null; excerpt: string | null; published_at: string | null; updated_at: string | null; is_published: boolean | null }>>([])
-  const [paidOrders, setPaidOrders] = useState<Array<{ amount: number | null; created_at: string | null }>>([])
-  const [registrationCountByEvent, setRegistrationCountByEvent] = useState<Map<string, number>>(new Map())
+  const [eventCount, setEventCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [timeRange, setTimeRange] = useState<TimeRange>('7d')
+  const [eventFilter, setEventFilter] = useState('all')
 
   useEffect(() => {
     let active = true
-    setLoading(true)
     void (async () => {
       try {
-        const registrations = await adminApi.registrationsList()
-        const [eventsResult, announcementsResult, paidOrdersResult, registrationFormsResult] = await Promise.all([
-          supabase
-            .from('events')
-            .select('id, title, event_date, status, rider_limit, poster_url, banner_url')
-            .order('event_date', { ascending: true })
-            .limit(100),
-          supabase.from('announcements').select('id, title, excerpt, published_at, updated_at, is_published').order('updated_at', { ascending: false }).limit(5),
-          supabase.from('payment_orders').select('amount, created_at, status').eq('status', 'paid').order('created_at', { ascending: false }).limit(500),
-          supabase.from('registration_forms').select('event_id').limit(5000),
+        const [registrations, eventsResult] = await Promise.all([
+          adminApi.registrationsList(),
+          supabase.from('events').select('id', { count: 'exact', head: true }),
         ])
-
-        if (eventsResult.error) throw eventsResult.error
-        if (paidOrdersResult.error) throw paidOrdersResult.error
-        if (registrationFormsResult.error) throw registrationFormsResult.error
-        if (announcementsResult.error) {
-          console.warn('Announcements unavailable:', announcementsResult.error.message)
-        }
-
-        const eventCounts = new Map<string, number>()
-        for (const form of registrationFormsResult.data ?? []) {
-          const eventId = String(form.event_id ?? '').trim()
-          if (!eventId) continue
-          eventCounts.set(eventId, (eventCounts.get(eventId) ?? 0) + 1)
-        }
-
         if (!active) return
         setRows(registrations)
-        setEvents(
-          (eventsResult.data ?? []) as Array<{
-            id: string
-            title: string | null
-            event_date: string | null
-            status: string | null
-            rider_limit: number | null
-            poster_url: string | null
-            banner_url: string | null
-          }>,
-        )
-        setAnnouncements((announcementsResult.data ?? []) as Array<{ id: string; title: string | null; excerpt: string | null; published_at: string | null; updated_at: string | null; is_published: boolean | null }>)
-        setPaidOrders((paidOrdersResult.data ?? []) as Array<{ amount: number | null; created_at: string | null }>)
-        setRegistrationCountByEvent(eventCounts)
-      } catch (e) {
+        setEventCount(eventsResult.count ?? 0)
+      } catch {
         if (!active) return
-        setError((e as Error).message || 'Failed to load admin data.')
+        setRows([])
+        setEventCount(0)
       } finally {
-        if (!active) return
-        setLoading(false)
+        if (active) setLoading(false)
       }
     })()
     return () => {
@@ -475,353 +319,401 @@ export function AdminDashboard() {
     }
   }, [])
 
-  const monthlyRegistrationSeries = useMemo(() => {
-    const now = new Date()
-    const keys: string[] = []
-    const labels: string[] = []
-    for (let i = 11; i >= 0; i -= 1) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-      labels.push(d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }))
+  const paidRows = useMemo(() => rows.filter(isPaid), [rows])
+
+  const stats = useMemo(() => {
+    const total = rows.length
+    const paid = paidRows.length
+    const pending = rows.filter(isPending).length
+    return { total, paid, pending }
+  }, [rows, paidRows])
+
+  const shirtCounts = useMemo(() => {
+    const empty = () =>
+      SHIRT_SIZES.reduce(
+        (acc, size) => {
+          acc[size] = 0
+          return acc
+        },
+        {} as Record<(typeof SHIRT_SIZES)[number], number>,
+      )
+
+    const panels: Record<ShirtPanelKey, Record<(typeof SHIRT_SIZES)[number], number>> = {
+      criterium: empty(),
+      itt: empty(),
     }
-    const byMonth = new Map<string, number>(keys.map((k) => [k, 0]))
+
+    for (const row of paidRows) {
+      const panel = shirtPanelKey(row)
+      const size = normalizeShirtSize(row.jersey_size)
+      if (!panel || !size) continue
+      panels[panel][size] += 1
+    }
+
+    const totals: Record<ShirtPanelKey, number> = {
+      criterium: Object.values(panels.criterium).reduce((a, b) => a + b, 0),
+      itt: Object.values(panels.itt).reduce((a, b) => a + b, 0),
+    }
+
+    return { panels, totals }
+  }, [paidRows])
+
+  const registrationsOverTime = useMemo(() => {
+    const now = new Date()
+    const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 365
+    const labels: string[] = []
+    const keys: string[] = []
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i)
+      keys.push(d.toISOString().slice(0, 10))
+      labels.push(
+        d.toLocaleDateString('en-PH', {
+          month: 'short',
+          day: 'numeric',
+          ...(timeRange === '12m' ? { year: '2-digit' } : {}),
+        }),
+      )
+    }
+    const byDay = new Map(keys.map((k) => [k, 0]))
     for (const row of rows) {
       if (!row.created_at) continue
-      const d = new Date(row.created_at)
-      if (Number.isNaN(d.getTime())) continue
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-      if (byMonth.has(key)) byMonth.set(key, (byMonth.get(key) ?? 0) + 1)
+      const key = row.created_at.slice(0, 10)
+      if (byDay.has(key)) byDay.set(key, (byDay.get(key) ?? 0) + 1)
     }
-    return { labels, data: keys.map((k) => byMonth.get(k) ?? 0) }
-  }, [rows])
-
-  const monthlyRevenueSeries = useMemo(() => {
-    const now = new Date()
-    const keys: string[] = []
-    const labels: string[] = []
-    for (let i = 11; i >= 0; i -= 1) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-      labels.push(d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }))
+    if (timeRange === '12m') {
+      const byMonth = new Map<string, number>()
+      const monthLabels: string[] = []
+      for (let i = 11; i >= 0; i -= 1) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        byMonth.set(k, 0)
+        monthLabels.push(d.toLocaleString('en-PH', { month: 'short', year: '2-digit' }))
+      }
+      for (const row of rows) {
+        if (!row.created_at) continue
+        const d = new Date(row.created_at)
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        if (byMonth.has(k)) byMonth.set(k, (byMonth.get(k) ?? 0) + 1)
+      }
+      return {
+        labels: monthLabels,
+        data: Array.from(byMonth.values()),
+      }
     }
-    const byMonth = new Map<string, number>(keys.map((k) => [k, 0]))
-    for (const order of paidOrders) {
-      if (!order.created_at) continue
-      const d = new Date(order.created_at)
-      if (Number.isNaN(d.getTime())) continue
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '00')}`
-      if (byMonth.has(key)) byMonth.set(key, (byMonth.get(key) ?? 0) + Number(order.amount ?? 0))
-    }
-    return { labels, data: keys.map((k) => byMonth.get(k) ?? 0) }
-  }, [paidOrders])
+    return { labels, data: keys.map((k) => byDay.get(k) ?? 0) }
+  }, [rows, timeRange])
 
-  const eventParticipationSeries = useMemo(() => {
-    const slice = events.slice(0, 12)
-    const labels = slice.map((e) => {
-      const t = (e.title ?? 'Event').trim() || 'Event'
-      return t.length > 14 ? `${t.slice(0, 14)}…` : t
-    })
-    const usePercentScale = slice.length > 0 && slice.every((e) => Number(e.rider_limit ?? 0) > 0)
-    const data = slice.map((event) => {
-      const total = registrationCountByEvent.get(event.id) ?? 0
-      const limit = Number(event.rider_limit ?? 0)
-      if (limit > 0) return Math.round(Math.max(0, Math.min(100, (total / limit) * 100)))
-      return total
-    })
-    return { labels, data, usePercentScale }
-  }, [events, registrationCountByEvent])
-
-  const categorySegments = useMemo(() => {
-    const byDiscipline = new Map<string, number>()
+  const registrationsByEvent = useMemo(() => {
+    const byEvent = new Map<string, number>()
     for (const row of rows) {
-      const key = String(row.discipline ?? 'Unspecified').trim() || 'Unspecified'
-      byDiscipline.set(key, (byDiscipline.get(key) ?? 0) + 1)
+      const title = String(row.event_title ?? 'Unknown event').trim() || 'Unknown event'
+      byEvent.set(title, (byEvent.get(title) ?? 0) + 1)
     }
-    const sorted = Array.from(byDiscipline.entries()).sort((a, b) => b[1] - a[1])
-    const top = sorted.slice(0, 5)
-    const remainder = sorted.slice(5).reduce((sum, [, count]) => sum + count, 0)
-    if (remainder > 0) top.push(['Other', remainder])
-    const total = top.reduce((sum, [, count]) => sum + count, 0)
-    const colors = ['#1e4a8e', '#0d9488', '#d97706', '#7c3aed', '#64748b', '#ef4444']
+    const sorted = Array.from(byEvent.entries()).sort((a, b) => b[1] - a[1])
+    const filtered =
+      eventFilter === 'all' ? sorted : sorted.filter(([name]) => name === eventFilter)
+    const total = filtered.reduce((sum, [, n]) => sum + n, 0)
+    const colors = ['#0ea5e9', '#6366f1', '#14b8a6', '#f59e0b', '#ec4899', '#64748b']
     return {
       total,
-      segments: top.map(([label, count], idx) => ({
+      items: filtered.map(([label, count], idx) => ({
         label,
+        count,
         pct: total > 0 ? Math.round((count / total) * 100) : 0,
         color: colors[idx % colors.length],
       })),
     }
+  }, [rows, eventFilter])
+
+  const eventOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const row of rows) {
+      const t = String(row.event_title ?? '').trim()
+      if (t) names.add(t)
+    }
+    return ['all', ...Array.from(names).sort((a, b) => a.localeCompare(b))]
   }, [rows])
 
-  const stats = useMemo(() => {
-    const totalRegs = rows.length
-    const paid = rows.filter((r) => String(r.payment_status ?? '').toLowerCase() === 'paid').length
-    const uniqueEmails = new Set(rows.map((r) => r.registrant_email).filter(Boolean)).size
-    const activeEvents = events.filter((event) => String(event.status ?? '').toLowerCase() === 'published').length
-    const completedEvents = events.filter((event) => String(event.status ?? '').toLowerCase() === 'completed').length
-    const revenue = paidOrders.reduce((sum, order) => sum + Number(order.amount ?? 0), 0)
-    return {
-      totalRegs,
-      paid,
-      cyclists: uniqueEmails || totalRegs,
-      activeEvents,
-      completedEvents,
-      revenue,
-    }
-  }, [rows, events, paidOrders])
+  const lineChartData = useMemo(
+    () => ({
+      labels: registrationsOverTime.labels,
+      datasets: [
+        {
+          label: 'Registrations',
+          data: registrationsOverTime.data,
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, 0.12)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: 4,
+          pointBackgroundColor: '#2563eb',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+        },
+      ],
+    }),
+    [registrationsOverTime],
+  )
 
-  const recent = rows.slice(0, 5)
+  const donutChartData = useMemo(
+    () => ({
+      labels: registrationsByEvent.items.map((i) => i.label),
+      datasets: [
+        {
+          data: registrationsByEvent.items.map((i) => i.count),
+          backgroundColor: registrationsByEvent.items.map((i) => i.color),
+          borderWidth: 0,
+        },
+      ],
+    }),
+    [registrationsByEvent],
+  )
+
+  const handleExportShirts = () => {
+    const lines = ['Event Type,Size,Count']
+    for (const panel of SHIRT_PANELS) {
+      for (const size of SHIRT_SIZES) {
+        lines.push(`${panel.title},${size},${shirtCounts.panels[panel.key][size]}`)
+      }
+      lines.push(`${panel.title},TOTAL,${shirtCounts.totals[panel.key]}`)
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'finisher-shirt-status.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <>
-      {/* Shimmer keyframe injected once via a style tag */}
       <style>{`
-        @keyframes shimmer {
-          0%   { transform: translateX(-100%); }
+        @keyframes admin-dashboard-shimmer {
+          0% { transform: translateX(-100%); }
           100% { transform: translateX(100%); }
         }
       `}</style>
-
       <div className="space-y-6">
+      {/* Stat cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => <StatCardSkeleton key={i} />)
+        ) : (
+          <>
+            <StatCard
+              title="Total Registrations"
+              value={stats.total.toLocaleString()}
+              icon={<UserRound className="h-5 w-5 text-emerald-600" strokeWidth={2} />}
+              iconWrap="bg-emerald-50 ring-1 ring-emerald-100"
+              footerTo="/admin/registrations"
+              footerLabel="View all registrations"
+              extraIcon={<Users className="h-5 w-5" />}
+            />
+            <StatCard
+              title="Paid"
+              value={stats.paid.toLocaleString()}
+              icon={<Check className="h-5 w-5 text-emerald-600" strokeWidth={2.5} />}
+              iconWrap="bg-emerald-50 ring-1 ring-emerald-100"
+              footerTo="/admin/registrations"
+              footerLabel="View all paid"
+              badge={{
+                text: `${pct(stats.paid, stats.total)}%`,
+                className: 'bg-emerald-100 text-emerald-800',
+              }}
+            />
+            <StatCard
+              title="Unpaid / Pending"
+              value={stats.pending.toLocaleString()}
+              icon={<Hourglass className="h-5 w-5 text-amber-600" strokeWidth={2} />}
+              iconWrap="bg-amber-50 ring-1 ring-amber-100"
+              footerTo="/admin/registrations"
+              footerLabel="View all pending"
+              badge={{
+                text: `${pct(stats.pending, stats.total)}%`,
+                className: 'bg-slate-100 text-slate-600',
+              }}
+            />
+            <StatCard
+              title="Total Events"
+              value={eventCount.toLocaleString()}
+              icon={<Bike className="h-5 w-5 text-sky-600" strokeWidth={2} />}
+              iconWrap="bg-sky-50 ring-1 ring-sky-100"
+              footerTo="/admin/events"
+              footerLabel="View all events"
+            />
+          </>
+        )}
+      </div>
 
-        {/* ── Stat Cards ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-          {loading ? (
-            Array.from({ length: 5 }).map((_, i) => <StatCardSkeleton key={i} />)
-          ) : (
-            <>
-              <StatCard
-                label="Total Cyclists"
-                value={stats.cyclists.toLocaleString()}
-                trend={`${stats.cyclists.toLocaleString()} unique riders`}
-                icon={Users}
-                iconBg="bg-blue-600"
+      {/* Finisher shirt + goblin */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        {loading ? (
+          <>
+            <FinisherShirtSectionSkeleton />
+            <div className="xl:col-span-4">
+              <GoblinCardSkeleton />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm xl:col-span-8">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Shirt className="h-5 w-5 text-slate-700" strokeWidth={2} />
+                <h2 className="text-sm font-bold tracking-wide text-slate-900">FINISHER SHIRT STATUS</h2>
+              </div>
+              <p className="mt-1 text-sm text-slate-500">Paid registrations only — shirt sizes per discipline</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleExportShirts}
+              disabled={loading}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              Export
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {SHIRT_PANELS.map((panel) => (
+              <ShirtPanel
+                key={panel.key}
+                title={panel.title}
+                theme={panel.theme}
+                counts={shirtCounts.panels[panel.key]}
+                total={shirtCounts.totals[panel.key]}
+                loading={loading}
               />
-              <StatCard
-                label="Total Registrations"
-                value={stats.totalRegs.toLocaleString()}
-                trend="Latest registrations snapshot"
-                icon={ClipboardList}
-                iconBg="bg-emerald-600"
-              />
-              <StatCard
-                label="Active Events"
-                value={String(stats.activeEvents)}
-                trend="Published events"
-                icon={CalendarDays}
-                iconBg="bg-violet-600"
-              />
-              <StatCard
-                label="Paid Registrations"
-                value={stats.paid.toLocaleString()}
-                trend="Successful payment status"
-                icon={CreditCard}
-                iconBg="bg-teal-600"
-              />
-              <StatCard
-                label="Revenue Summary"
-                value={`₱${stats.revenue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`}
-                trend="From paid payment orders"
-                icon={Bike}
-                iconBg="bg-lime-600"
-              />
-            </>
-          )}
+            ))}
+          </div>
+
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <p>Paid registrations only. Counts update as new payments are confirmed.</p>
+          </div>
         </div>
 
-        {/* ── Charts ─────────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-4">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => <ChartSkeleton key={i} />)
-          ) : (
-            <>
-              <ChartPlaceholder title="Monthly Registrations">
-                <MonthlyRegistrationsChartJs labels={monthlyRegistrationSeries.labels} data={monthlyRegistrationSeries.data} />
-              </ChartPlaceholder>
-              <ChartPlaceholder title="Revenue Analytics">
-                <RevenueChartJs labels={monthlyRevenueSeries.labels} data={monthlyRevenueSeries.data} />
-              </ChartPlaceholder>
-              <ChartPlaceholder title="Event Participation Trends">
-                <EventParticipationBarChartJs
-                  labels={eventParticipationSeries.labels}
-                  data={eventParticipationSeries.data}
-                  usePercentScale={eventParticipationSeries.usePercentScale}
+        <div className="xl:col-span-4">
+          <WarehouseGoblinCard />
+        </div>
+          </>
+        )}
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {loading ? (
+          <>
+            <LineChartCardSkeleton />
+            <DonutChartCardSkeleton />
+          </>
+        ) : (
+          <>
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-base font-semibold text-slate-900">Registrations Over Time</h3>
+            <div className="relative">
+              <select
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+                className="appearance-none rounded-lg border border-slate-200 bg-white py-1.5 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="12m">Last 12 months</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          </div>
+          <div className="h-56">
+            {loading ? (
+              <Shimmer className="h-full w-full rounded-lg" />
+            ) : (
+              <Line
+                data={lineChartData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { grid: { display: false } },
+                    y: { beginAtZero: true, ticks: { precision: 0 } },
+                  },
+                }}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-base font-semibold text-slate-900">Registrations by Event</h3>
+            <div className="relative">
+              <select
+                value={eventFilter}
+                onChange={(e) => setEventFilter(e.target.value)}
+                className="max-w-[220px] appearance-none truncate rounded-lg border border-slate-200 bg-white py-1.5 pl-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">All Events</option>
+                {eventOptions
+                  .filter((v) => v !== 'all')
+                  .map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+            <div className="h-44 w-44 shrink-0">
+              {loading || registrationsByEvent.items.length === 0 ? (
+                <Shimmer className="mx-auto h-44 w-44 rounded-full" />
+              ) : (
+                <Doughnut
+                  data={donutChartData}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '62%',
+                    plugins: { legend: { display: false } },
+                  }}
                 />
-              </ChartPlaceholder>
-              <ChartPlaceholder title="Category Participation">
-                <DonutCategory segments={categorySegments.segments} total={categorySegments.total} />
-              </ChartPlaceholder>
-            </>
-          )}
-        </div>
-
-        {/* ── Bottom Row ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-
-          {/* Recent Registrations */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm xl:col-span-1">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-900">Recent Registrations</h3>
-              <Link to="/admin/registrations" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-                View all
-              </Link>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[320px] text-left text-sm">
-                <thead className="bg-slate-50 text-xs text-slate-500">
-                  <tr>
-                    <th className="px-4 py-2 font-medium">Rider</th>
-                    <th className="px-4 py-2 font-medium">Event</th>
-                    <th className="px-4 py-2 font-medium">Status</th>
-                    <th className="px-4 py-2 font-medium">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    Array.from({ length: 5 }).map((_, i) => <TableRowSkeleton key={i} />)
-                  ) : error ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-3 text-rose-600">
-                        {error}
-                      </td>
-                    </tr>
-                  ) : recent.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                        No registrations yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    recent.map((r) => (
-                      <tr key={r.id} className="text-slate-800">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                              {riderAvatarInitials(r)}
-                            </span>
-                            <span className="max-w-[140px] truncate text-xs sm:text-sm" title={riderDisplayName(r)}>
-                              {riderDisplayName(r)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="max-w-[100px] truncate px-4 py-3 text-xs sm:text-sm">
-                          {r.event_title ?? r.race_type ?? '—'}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusPill(String(r.payment_status ?? 'pending'))}`}
-                          >
-                            {String(r.payment_status ?? 'pending')}
-                          </span>
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">
-                          {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Upcoming Events */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-900">Upcoming Events</h3>
-              <Link to="/admin/events" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-                Manage
-              </Link>
-            </div>
-            <ul className="divide-y divide-slate-100 p-2">
-              {loading ? (
-                Array.from({ length: 5 }).map((_, i) => <EventItemSkeleton key={i} />)
-              ) : events.length === 0 ? (
-                <li className="px-3 py-4 text-xs text-slate-500">No events found.</li>
-              ) : (
-                events.slice(0, 5).map((ev) => {
-                  const registered = registrationCountByEvent.get(ev.id) ?? 0
-                  const cap = Number(ev.rider_limit ?? 0)
-                  const posterSrc = (ev.poster_url ?? ev.banner_url)?.trim() || '/bg2.png'
-                  return (
-                    <li key={ev.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                      <img
-                        src={posterSrc}
-                        alt=""
-                        className="h-12 w-12 shrink-0 rounded-lg object-cover bg-slate-200"
-                        onError={(e) => {
-                          e.currentTarget.src = '/bg2.png'
-                        }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-900">{ev.title ?? 'Untitled event'}</p>
-                        <p className="text-xs text-slate-500">{ev.event_date ? new Date(ev.event_date).toLocaleDateString() : 'TBA'}</p>
-                        <p className="mt-1 text-xs text-slate-600">
-                          Registration: {cap > 0 ? `${registered} / ${cap}` : `${registered} total`}
-                        </p>
-                      </div>
-                      <span
-                        className={`h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          String(ev.status ?? '').toLowerCase() === 'published' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {String(ev.status ?? '').toLowerCase() === 'published' ? 'Published' : 'Draft'}
-                      </span>
-                    </li>
-                  )
-                })
               )}
-            </ul>
-          </div>
-
-          {/* Latest Announcements */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-900">Latest Announcements</h3>
-              <Link to="/admin/announcements" className="text-xs font-medium text-[#1e4a8e] hover:underline">
-                New
-              </Link>
             </div>
-            <ul className="divide-y divide-slate-100 p-2">
+            <ul className="min-w-0 flex-1 space-y-2 text-sm">
               {loading ? (
-                Array.from({ length: 5 }).map((_, i) => <AnnouncementItemSkeleton key={i} />)
-              ) : announcements.length === 0 ? (
-                <li className="px-3 py-4 text-xs text-slate-500">No announcements found.</li>
+                Array.from({ length: 4 }).map((_, i) => <Shimmer key={i} className="h-4 w-full" />)
+              ) : registrationsByEvent.items.length === 0 ? (
+                <li className="text-slate-500">No registrations yet.</li>
               ) : (
-                announcements.map((a) => (
-                  <li key={a.id} className="flex gap-3 rounded-lg p-2 hover:bg-slate-50">
-                    <div className="h-12 w-12 shrink-0 rounded-lg bg-[#cfae3f]/30" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-900">{a.title ?? 'Untitled announcement'}</p>
-                      <p className="line-clamp-2 text-xs text-slate-600">{a.excerpt ?? 'No summary available.'}</p>
-                      <p className="mt-1 text-[10px] text-slate-400">
-                        {a.published_at || a.updated_at ? new Date(a.published_at ?? a.updated_at ?? '').toLocaleDateString() : 'Draft'}
-                      </p>
-                    </div>
+                registrationsByEvent.items.map((item) => (
+                  <li key={item.label} className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="truncate text-slate-700" title={item.label}>
+                        {item.label}
+                      </span>
+                    </span>
+                    <span className="shrink-0 tabular-nums font-medium text-slate-900">
+                      {item.count} ({item.pct}%)
+                    </span>
                   </li>
                 ))
               )}
             </ul>
           </div>
         </div>
-
-        {/* ── Quick Actions ───────────────────────────────────────────────────── */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <h3 className="text-sm font-semibold text-slate-900">Quick Actions</h3>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-            {quickActions.map(({ label, to, icon: Icon }) => (
-              <Link
-                key={to}
-                to={to}
-                className="flex flex-col items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-4 text-center text-xs font-medium text-slate-800 transition hover:border-[#1e4a8e]/40 hover:bg-slate-50"
-              >
-                <Icon className="h-5 w-5 text-[#1e4a8e]" strokeWidth={2} />
-                {label}
-              </Link>
-            ))}
-          </div>
-        </div>
+          </>
+        )}
       </div>
+    </div>
+  
     </>
   )
 }
