@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'unknown' | 'onsite_cash' | 'sponsored'
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'unknown'
 
 export interface AdminRegistrationRow {
   id: string
@@ -102,9 +102,6 @@ function normalizePaymentStatus(args: { orderStatus?: string | null; txStatus?: 
   const order = String(args.orderStatus ?? '').toLowerCase()
   const tx = String(args.txStatus ?? '').toLowerCase()
   const reg = String(args.registrationStatus ?? '').toLowerCase()
-  // Non-PayMongo statuses stored directly in registration_forms.status take priority.
-  if (reg === 'onsite_cash') return 'onsite_cash'
-  if (reg === 'sponsored') return 'sponsored'
   const s = tx || order
   if (['paid', 'succeeded', 'success', 'completed', 'complete', 'confirmed'].includes(s)) return 'paid'
   // Import flow writes registration_forms.status = confirmed.
@@ -300,7 +297,7 @@ export const adminApi = {
   async registrationDetails(registrationId: string) {
     const { data: reg, error: regError } = await supabase
       .from('registration_forms')
-      .select('id, created_at, status, registrant_email, user_id, event_id, race_category_id, checkout_bundle_id, entry_event_type_slug, entry_event_type_label, registration_fee')
+      .select('id, created_at, status, registrant_email, user_id, event_id, race_category_id, checkout_bundle_id, entry_event_type_slug, entry_event_type_label')
       .eq('id', registrationId)
       .maybeSingle()
 
@@ -414,8 +411,6 @@ export const adminApi = {
       raceCategoryId: string
       ageCategoryLabel?: string
       discipline?: string
-      registrationStatus?: string
-      registrationFee?: number
     }
     rider: {
       firstName: string
@@ -459,7 +454,7 @@ export const adminApi = {
     return data as { ok?: boolean; error?: string }
   },
 
-  /** Purges unpaid drafts when PayMongo checkout expired, or no checkout session after 10 minutes. */
+  /** Removes abandoned `pending_payment` / `payment_processing` registrations older than 10 minutes (service-side rules). */
   async adminPurgeStalePendingRegistrations() {
     const { data, error } = await supabase.functions.invoke('admin-delete-pending-registration', {
       body: { purgeStaleOnly: true },
@@ -474,75 +469,5 @@ export const adminApi = {
     })
     if (error) throw new Error(await invokeEdgeErrorMessage(error, data, 'Could not generate certificate file.'))
     return data as { ok: boolean; generated_count?: number; error?: string }
-  },
-
-  /**
-   * Create a registration directly from the admin panel for onsite cash payers
-   * or sponsored/complimentary riders — no PayMongo payment order involved.
-   * Requires 'onsite_cash' and 'sponsored' to exist in the registration_state enum.
-   */
-  async adminCreateOnsiteRegistration(args: {
-    paymentType: 'onsite_cash' | 'sponsored'
-    eventId: string
-    raceCategoryId: string
-    entryEventTypeSlug: string | null
-    entryEventTypeLabel: string
-    registrantEmail: string
-    registrationFee: number
-    rider: {
-      firstName: string
-      lastName: string
-      gender: string
-      birthDate: string
-      address: string
-      contactNumber: string
-      emergencyContactName: string
-      emergencyContactNumber: string
-      teamName?: string
-      discipline?: string
-      ageCategory?: string
-      jerseySize?: string
-    }
-  }): Promise<{ registrationId: string }> {
-    const now = new Date().toISOString()
-    const { data: regRow, error: regError } = await supabase
-      .from('registration_forms')
-      .insert({
-        event_id: args.eventId,
-        race_category_id: args.raceCategoryId,
-        registrant_email: args.registrantEmail,
-        registration_fee: args.registrationFee,
-        entry_event_type_slug: args.entryEventTypeSlug ?? null,
-        entry_event_type_label: args.entryEventTypeLabel || null,
-        status: args.paymentType,
-        created_at: now,
-        updated_at: now,
-      })
-      .select('id')
-      .single()
-    if (regError) throw new Error(regError.message || 'Failed to create registration.')
-
-    const registrationId = String(regRow.id)
-
-    const { error: riderError } = await supabase
-      .from('registration_rider_details')
-      .insert({
-        registration_id: registrationId,
-        first_name: args.rider.firstName,
-        last_name: args.rider.lastName,
-        gender: args.rider.gender,
-        birth_date: args.rider.birthDate || null,
-        address: args.rider.address,
-        contact_number: args.rider.contactNumber,
-        emergency_contact_name: args.rider.emergencyContactName,
-        emergency_contact_number: args.rider.emergencyContactNumber,
-        team_name: args.rider.teamName || 'N/A',
-        discipline: args.rider.discipline ?? null,
-        age_category: args.rider.ageCategory ?? null,
-        jersey_size: args.rider.jerseySize ?? null,
-      })
-    if (riderError) throw new Error(riderError.message || 'Failed to save rider details.')
-
-    return { registrationId }
   },
 }

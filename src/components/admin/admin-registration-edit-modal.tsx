@@ -29,8 +29,6 @@ type EditForm = {
   jerseySize: string
   providerReference: string
   paymentOrderStatus: string
-  registrationStatus: string
-  registrationFee: string
 }
 
 const emptyForm: EditForm = {
@@ -50,8 +48,6 @@ const emptyForm: EditForm = {
   jerseySize: '',
   providerReference: '',
   paymentOrderStatus: '',
-  registrationStatus: '',
-  registrationFee: '',
 }
 
 function toDateInputValue(raw: string) {
@@ -114,8 +110,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
           jerseySize: String(rider?.jersey_size ?? ''),
           providerReference: String(order?.provider_reference ?? ''),
           paymentOrderStatus: String(order?.status ?? ''),
-          registrationStatus: String(reg.status ?? ''),
-          registrationFee: String((reg as { registration_fee?: number | null }).registration_fee ?? ''),
         })
       } catch (e) {
         if (!active) return
@@ -197,9 +191,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
       const categoryNext = String(category?.category_name ?? '').trim()
       const eventTypeLabelNext = form.entryEventTypeLabel.trim() || titleFromSlug(form.entryEventTypeSlug)
 
-      const feeNum = Math.max(0, Number(form.registrationFee) || 0)
-      const regStatus = form.registrationStatus.trim()
-
       const result = await adminApi.adminUpdateRegistration({
         registrationId,
         patch: {
@@ -209,8 +200,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
           raceCategoryId: form.raceCategoryId,
           ageCategoryLabel: categoryNext,
           discipline: disciplineNext,
-          registrationStatus: regStatus || undefined,
-          registrationFee: regStatus === 'sponsored' ? 0 : feeNum,
         },
         rider: {
           firstName: form.firstName,
@@ -242,15 +231,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
       setSaving(false)
     }
   }
-
-  const registrationStatusOptions = [
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'pending_payment', label: 'Pending Payment' },
-  { value: 'payment_processing', label: 'Payment Processing' },
-  { value: 'onsite_cash', label: 'Onsite Cash' },
-  { value: 'sponsored', label: 'Sponsored' },
-  { value: 'cancelled', label: 'Cancelled' },
-]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
@@ -331,21 +311,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
               <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Payment</p>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <SelectField
-                    label="Registration Status"
-                    value={form.registrationStatus}
-                    onChange={(v) => {
-                      update('registrationStatus', v)
-                      if (v === 'sponsored') update('registrationFee', '0')
-                    }}
-                    options={registrationStatusOptions}
-                  />
-                  <Field
-                    label="Registration Fee (₱)"
-                    type="number"
-                    value={form.registrationFee}
-                    onChange={(v) => update('registrationFee', v)}
-                  />
                   <Field label="Payment ID (provider_reference)" value={form.providerReference} onChange={(v) => update('providerReference', v)} />
                   <SelectField
                     label="Payment Order Status"
@@ -354,9 +319,6 @@ export function AdminRegistrationEditModal({ registrationId, onClose, onSaved }:
                     options={paymentStatusOptions}
                   />
                 </div>
-                <p className="mt-2 text-[11px] text-slate-500">
-                  Use Onsite Cash or Sponsored for walk-in / complimentary riders. Bib can be generated without a PayMongo pay_ reference.
-                </p>
               </section>
 
               {error ? <p className="text-sm text-rose-600">{error}</p> : null}
