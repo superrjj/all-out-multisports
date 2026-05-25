@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { supabase } from '../../lib/supabase'
 import { adminModulesApi } from '../../services/adminModulesApi'
 import { ModuleShell, formatDate, formatMoney, useModuleLoader } from './admin-module-shared'
+import { isRegistrationOpen } from '../../utils/registrationWindow'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Step = 1 | 2 | 3 | 4
@@ -2258,6 +2259,19 @@ function EventCard({
               <span className="text-red-600 font-normal"> · {formatTime(event.registration_deadline as string)}</span>
             ) : null}
           </p>
+          {isPublished ? (
+            <p className="mt-0.5">
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  isRegistrationOpen(event)
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-rose-100 text-rose-800'
+                }`}
+              >
+                {isRegistrationOpen(event) ? 'Registration open' : 'Registration closed'}
+              </span>
+            </p>
+          ) : null}
           <p className="mt-1 text-slate-500" title={`Fee: ${feeDisplay}`}>Paid registrations</p>
           <p className="font-semibold text-blue-600">
             {registrations.toLocaleString()} / {riderLimit.toLocaleString()}

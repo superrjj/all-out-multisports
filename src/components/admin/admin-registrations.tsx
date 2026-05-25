@@ -9,6 +9,12 @@ import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, Clipboar
 import { ImportParticipantsModal } from './admin-participant-modal'
 import { AdminRegistrationEditModal } from './admin-registration-edit-modal'
 import { generateAndUploadAdminCertificate } from '../../utils/adminCertificate'
+import {
+  getDisplayPaymentReference,
+  isInternalPaymentReference,
+  isPaymongoPaymentReferenceId,
+  normalizePaymentReferenceDisplay,
+} from '../../utils/paymentReference'
 
 function formatEventTypeSlugLabel(slug: string | null | undefined) {
   const raw = String(slug ?? '').trim()
@@ -139,7 +145,7 @@ function dataRow(
   resolveReference: (row: AdminRegistrationRow) => string,
 ): string[] {
   const ref = resolveReference(row)
-  const payRef = ref.startsWith('pay_') ? ref : ''
+  const payRef = getDisplayPaymentReference(ref)
   const qr = row.qr_cert_email_sent
     ? row.qr_cert_email_sent_at
       ? `Sent — ${formatQrCertEmailSentAt(row.qr_cert_email_sent_at)}`
@@ -248,53 +254,6 @@ function ShimmerLine({ className }: { className: string }) {
   return <div className={`${SHIMMER} ${className}`} />
 }
 
-
-/** True payment gateway id for Reference column — PayMongo ids only; hides synthetic / internal values. */
-function isPaymongoPaymentReferenceId(raw: string) {
-  const v = normalizePaymentReferenceDisplay(raw)
-  return v.startsWith('pay_')
-}
-
-/** Onsite cash payment ids (e.g. ONSITE_CASH10) stored on payment_orders. */
-function isOnsiteCashPaymentReference(raw: string) {
-  const v = normalizePaymentReferenceDisplay(raw)
-  return /^ONSITE_CASH\d*$/i.test(v)
-}
-
-/** Free champion / complimentary entry (e.g. CHAMPION, CHAMPION3). */
-function isChampionPaymentReference(raw: string) {
-  const v = normalizePaymentReferenceDisplay(raw)
-  return /^CHAMPION\d*$/i.test(v)
-}
-
-/** Internal / non-PayMongo refs shown in Reference No. and used for bib assignment. */
-function isInternalPaymentReference(raw: string) {
-  return isOnsiteCashPaymentReference(raw) || isChampionPaymentReference(raw)
-}
-
-/** Reference is sufficient to assign a bib (PayMongo, onsite cash, or champion). */
-function isBibAssignablePaymentReference(raw: string) {
-  const v = normalizePaymentReferenceDisplay(raw)
-  if (!v) return false
-  return isPaymongoPaymentReferenceId(v) || isInternalPaymentReference(v)
-}
-
-/** Shown in Reference No. column and used to enable Generate bib. */
-function getDisplayPaymentReference(raw: string) {
-  const v = normalizePaymentReferenceDisplay(raw)
-  return isBibAssignablePaymentReference(v) ? v : ''
-}
-
-/** Strip accidental event-type suffixes from stored refs (legacy import appended `-criterium` / `-individual-time-trial`). */
-function normalizePaymentReferenceDisplay(raw: string): string {
-  let v = String(raw ?? '').trim()
-  if (!v) return ''
-  v = v.replace(/-individual-time-trial$/i, '')
-  v = v.replace(/-criterium$/i, '')
-  v = v.replace(/-individual-?$/i, '')
-  v = v.replace(/-individual$/i, '')
-  return v.trim()
-}
 
 function extractTallySubmissionFromMerchantReference(raw: string): string {
   const mr = String(raw ?? '').trim()
@@ -721,14 +680,14 @@ export function AdminRegistrations() {
       const sid = extractTallySubmissionFromMerchantReference(String(r.merchant_reference ?? ''))
       if (!sid) continue
       const pref = normalizePaymentReferenceDisplay(String(r.provider_reference ?? ''))
-      if (pref.startsWith('pay_')) out.set(sid, pref)
+      if (isPaymongoPaymentReferenceId(pref)) out.set(sid, pref)
     }
     return out
   }, [rows])
 
   const getEffectiveProviderReference = (row: AdminRegistrationRow) => {
     const direct = normalizePaymentReferenceDisplay(String(row.provider_reference ?? ''))
-    if (direct.startsWith('pay_') || isInternalPaymentReference(direct)) return direct
+    if (isPaymongoPaymentReferenceId(direct) || isInternalPaymentReference(direct)) return direct
     const merchant = normalizePaymentReferenceDisplay(String(row.merchant_reference ?? ''))
     if (isInternalPaymentReference(merchant)) return merchant
     const sid = extractTallySubmissionFromMerchantReference(String(row.merchant_reference ?? ''))
@@ -956,7 +915,7 @@ export function AdminRegistrations() {
     }
     if (!payRef) {
       setActionBanner({
-        text: 'Needs a payment reference (pay_... or ONSITE_CASH...) on this row before a bib can be assigned.',
+        text: 'Needs a payment reference (pay_..., ONSITE_CASH..., CHAMPION..., pay_SPONSORED..., or pay_BPI_ATTY...) on this row before a bib can be assigned.',
         tone: 'info',
       })
       return
@@ -1386,7 +1345,7 @@ export function AdminRegistrations() {
                                 ? undefined
                                 : isPaid
                                   ? undefined
-                                  : 'Usually shown after paid; generate manually when a payment reference (pay_..., ONSITE_CASH..., or CHAMPION...) is set.'
+                                  : 'Usually shown after paid; generate manually when a payment reference (pay_..., ONSITE_CASH..., CHAMPION..., pay_SPONSORED..., or pay_BPI_ATTY...) is set.'
                             }
                           >
                             {String(r.bib_number ?? '').trim()

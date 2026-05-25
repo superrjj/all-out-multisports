@@ -1,8 +1,9 @@
 import { supabase } from '../lib/supabase'
 import type { Event } from '../types'
+import { isRegistrationOpen } from '../utils/registrationWindow'
 
 export const api = {
-  async upcomingEvents(raceType?: string) {
+  async publishedEvents(raceType?: string) {
     let query = supabase
       .from('events')
       .select('*')
@@ -13,6 +14,12 @@ export const api = {
     const { data, error } = await query
     if (error) throw error
     return (data ?? []) as Event[]
+  },
+
+  /** Published events that are still within the registration deadline. */
+  async upcomingEvents(raceType?: string) {
+    const events = await this.publishedEvents(raceType)
+    return events.filter((event) => isRegistrationOpen(event))
   },
 
   async eventDetails(id: string) {
