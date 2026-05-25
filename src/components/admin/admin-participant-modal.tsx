@@ -2,6 +2,12 @@ import { useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { X, Upload, FileText, AlertTriangle, CheckCircle2, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase as supabaseAdmin } from '../../lib/supabase'
+import {
+  getDisplayPaymentReference,
+  IMPORTABLE_PAYMENT_ID_HINT,
+  isBibAssignablePaymentReference,
+  normalizePaymentReferenceDisplay,
+} from '../../utils/paymentReference'
 
 /** Must match `events.id` in Supabase (imports attach to this event only). */
 const EVENT_ID = 'b8d4183a-2cbe-43cb-b0bd-c798d47f327e'
@@ -166,15 +172,27 @@ function cellAt(cols: string[], anchor: number, legacyIndex: number): string {
  *  40 Proof of Payment,
  *  41 Price
  */
-function parseTallyRows(matrix: string[][]): ParsedRow[] {
-  if (matrix.length < 2) return []
+type ParseTallyResult = {
+  rows: ParsedRow[]
+  skippedMissingPaymentId: number
+  skippedInvalidPaymentId: number
+}
+
+function parseTallyRows(matrix: string[][]): ParseTallyResult {
+  if (matrix.length < 2) {
+    return { rows: [], skippedMissingPaymentId: 0, skippedInvalidPaymentId: 0 }
+  }
 
   const headers = matrix[0] ?? []
   const payAnchor = resolvePaymentIdColumnIndex(headers)
-  if (payAnchor < 0) return []
+  if (payAnchor < 0) {
+    return { rows: [], skippedMissingPaymentId: 0, skippedInvalidPaymentId: 0 }
+  }
 
   const finalAgeIdx = resolveFinalAgeCategoryColumnIndex(headers)
   const rows: ParsedRow[] = []
+  let skippedMissingPaymentId = 0
+  let skippedInvalidPaymentId = 0
 
   for (const cols of matrix.slice(1)) {
     if (!cols.some((x) => String(x ?? '').trim())) continue
@@ -187,12 +205,23 @@ function parseTallyRows(matrix: string[][]): ParsedRow[] {
     const isCriterium = cellBoolTruthy(cellAt(cols, payAnchor, 7))
     const isITT = cellBoolTruthy(cellAt(cols, payAnchor, 8))
     const amount = parseFloat(cellAt(cols, payAnchor, 41).replace(/[^0-9.]/g, '')) || 0
-    const paymongoId = paymongoRaw || undefined
 
     const finalAgeCategory = finalAgeIdx >= 0 ? String(cols[finalAgeIdx] ?? '').trim() : ''
 
     if (!email) continue
     if (!isImportablePaymentStatus(paymentStatus)) continue
+    if (!isCriterium && !isITT) continue
+
+    const paymentId = normalizePaymentReferenceDisplay(paymongoRaw)
+    if (!paymentId) {
+      skippedMissingPaymentId++
+      continue
+    }
+    if (!isBibAssignablePaymentReference(paymentId)) {
+      skippedInvalidPaymentId++
+      continue
+    }
+    const paymongoId = paymentId
 
     let cFirstName = '', cLastName = '', cGender = '', cDateOfBirth = ''
     let cAddress = '', cContactNumber = '', cEmergencyContact = '', cEmergencyContactNumber = ''
@@ -308,7 +337,7 @@ function parseTallyRows(matrix: string[][]): ParsedRow[] {
     })
   }
 
-  return rows
+  return { rows, skippedMissingPaymentId, skippedInvalidPaymentId }
 }
 
 function validateImportMatrix(matrix: string[][]): string | null {
@@ -393,9 +422,9 @@ function ageCategoryFromAge(age: number): string {
   return 'Masters D (55 and above)'
 }
 
-/** One PayMongo charge for CRI+ITT bundle: only one row may store pay_… (unique constraint on provider_reference). */
+/** One charge ref for CRI+ITT bundle: only one row may store provider_reference (unique constraint). */
 function providerReferenceForImportedLine(row: ParsedRow, eventType: 'criterium' | 'itt'): string | null {
-  const id = row.paymongoId?.trim()
+  const id = getDisplayPaymentReference(row.paymongoId ?? '')
   if (!id) return null
   if (row.isCriterium && row.isITT) {
     return eventType === 'criterium' ? id : null
@@ -564,7 +593,7 @@ async function insertRegistration(row: ParsedRow, eventType: 'criterium' | 'itt'
     })
     const missingCategory = !raceCategoryId
 
-    const fee = Number(row.amount) > 0 ? Number(row.amount) : null
+    const fee = Number(row.amount) > 0 ? Number(row.amount) : 0
 
     const { data: regData, error: regError } = await supabaseAdmin
       .from('registration_forms')
@@ -650,6 +679,7 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
   const [progress, setProgress] = useState(0)
   const [showErrors, setShowErrors] = useState(false)
   const [checkingExisting, setCheckingExisting] = useState(false)
+  const [parseSkipStats, setParseSkipStats] = useState({ missingPaymentId: 0, invalidPaymentId: 0 })
 
   const totalRegistrations = parsed.reduce((acc, row) => {
     const addC = row.isCriterium && !row.existsCriterium ? 1 : 0
@@ -657,7 +687,6 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
     return acc + addC + addI
   }, 0)
 
-  const withPaymongoId = parsed.filter((r) => r.paymongoId).length
   const previewRows = parsed.filter((row) => (row.isCriterium && !row.existsCriterium) || (row.isITT && !row.existsITT))
   const previewWithPaymongoId = previewRows.filter((r) => r.paymongoId).length
   const alreadyImportedCount = parsed.reduce((acc, row) => {
@@ -695,11 +724,28 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
         setParsed([])
         return
       }
-      const rows = parseTallyRows(matrix)
+      const { rows, skippedMissingPaymentId, skippedInvalidPaymentId } = parseTallyRows(matrix)
+      setParseSkipStats({
+        missingPaymentId: skippedMissingPaymentId,
+        invalidPaymentId: skippedInvalidPaymentId,
+      })
       if (rows.length === 0) {
-        setParseError(
-          'No importable rows. Need SUCCESS or PAID payment status; a valid email; and Criterium/ITT flags.',
-        )
+        const parts = [
+          'No importable rows.',
+          'Need SUCCESS or PAID payment status, email, Criterium/ITT flags,',
+          `and a valid PAYMENT ID (${IMPORTABLE_PAYMENT_ID_HINT}).`,
+        ]
+        if (skippedMissingPaymentId > 0 || skippedInvalidPaymentId > 0) {
+          const skipBits: string[] = []
+          if (skippedMissingPaymentId > 0) {
+            skipBits.push(`${skippedMissingPaymentId} missing PAYMENT ID`)
+          }
+          if (skippedInvalidPaymentId > 0) {
+            skipBits.push(`${skippedInvalidPaymentId} invalid PAYMENT ID`)
+          }
+          parts.push(`Skipped: ${skipBits.join('; ')}.`)
+        }
+        setParseError(parts.join(' '))
         setParsed([])
         return
       }
@@ -759,6 +805,7 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
     setFile(null)
     setParsed([])
     setParseError('')
+    setParseSkipStats({ missingPaymentId: 0, invalidPaymentId: 0 })
     setStep('upload')
   }
 
@@ -834,10 +881,10 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Import Participants</h3>
               <p className="text-xs text-slate-500">
-              Upload a CSV, TSV, or Excel file. Make sure it has a header row that includes the{' '}
-              <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> and{' '}
-              <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code> columns.{' '}
-              The <code className="rounded bg-slate-100 px-1 text-[11px]">FINAL AGE CATEGORY</code> column is optional.
+              Upload a CSV, TSV, or Excel file. Header must include{' '}
+              <code className="rounded bg-slate-100 px-1 text-[11px]">PAYMENT ID</code> ({IMPORTABLE_PAYMENT_ID_HINT}) and{' '}
+              <code className="rounded bg-slate-100 px-1 text-[11px]">Price</code>. Rows without a valid payment ID are skipped.{' '}
+              <code className="rounded bg-slate-100 px-1 text-[11px]">FINAL AGE CATEGORY</code> is optional.
             </p>
             </div>
           </div>
@@ -903,15 +950,23 @@ export function ImportParticipantsModal({ onClose, onDone }: Props) {
               }}
             />
 
-            {/* Warning: rows missing Payment ID */}
-            {parsed.length > 0 && withPaymongoId < parsed.length && (
+            {parsed.length > 0 &&
+            (parseSkipStats.missingPaymentId > 0 || parseSkipStats.invalidPaymentId > 0) ? (
               <div className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                 <p className="text-[11px] text-amber-700">
-                  {parsed.length - withPaymongoId} row{parsed.length - withPaymongoId !== 1 ? 's' : ''} have no <span className="font-mono">PAYMENT ID</span> — reference no. will stay blank.
+                  Skipped from file (not imported):{' '}
+                  {parseSkipStats.missingPaymentId > 0
+                    ? `${parseSkipStats.missingPaymentId} missing PAYMENT ID`
+                    : null}
+                  {parseSkipStats.missingPaymentId > 0 && parseSkipStats.invalidPaymentId > 0 ? '; ' : null}
+                  {parseSkipStats.invalidPaymentId > 0
+                    ? `${parseSkipStats.invalidPaymentId} invalid PAYMENT ID (must be ${IMPORTABLE_PAYMENT_ID_HINT})`
+                    : null}
+                  .
                 </p>
               </div>
-            )}
+            ) : null}
 
             {parseError && (
               <p className="flex items-center gap-1.5 text-xs text-rose-600">

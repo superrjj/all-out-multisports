@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
 
   let eventQuery = supabase
     .from('events')
-    .select('id, registration_fee, race_type')
+    .select('id, registration_fee, race_type, registration_deadline, registration_closes_at')
     .eq('status', 'published')
   if (body.eventId) {
     eventQuery = eventQuery.eq('id', body.eventId)
@@ -95,6 +95,17 @@ Deno.serve(async (req) => {
   if (eventError) return textResponse(eventError.message, 500)
 
   if (!event?.id) return textResponse(`No published event found for ${body.raceType}`, 400)
+
+  const closesAt = String(event.registration_deadline ?? event.registration_closes_at ?? '').trim()
+  if (closesAt) {
+    const endMs = new Date(closesAt).getTime()
+    if (!Number.isNaN(endMs) && Date.now() > endMs) {
+      return textResponse(
+        JSON.stringify({ code: 'REGISTRATION_CLOSED', message: 'Registration for this event has closed.' }),
+        403,
+      )
+    }
+  }
 
   let resolvedRaceCategoryId: string | null = null
   if (body.raceCategoryId) {

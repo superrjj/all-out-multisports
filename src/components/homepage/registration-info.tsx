@@ -4,6 +4,11 @@ import { useAuth } from '../../hooks/useAuth'
 import { api } from '../../services/api'
 import { supabase } from '../../lib/supabase'
 import type { Event } from '../../types'
+import {
+  formatRegistrationClosesLabel,
+  getRegistrationClosesAtIso,
+  isRegistrationOpen,
+} from '../../utils/registrationWindow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,17 +62,7 @@ function formatEventRaceDateRange(event: Event | null): string {
 
 function formatRegistrationEnds(event: Event | null): string {
   if (!event) return 'TBA'
-  const raw = (event.registration_deadline ?? event.registration_closes_at ?? '').trim()
-  if (!raw) return 'TBA'
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return 'TBA'
-  return d.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+  return formatRegistrationClosesLabel(event) || 'TBA'
 }
 
 // ─── Skeletons ────────────────────────────────────────────────────────────────
@@ -180,7 +175,7 @@ export function RegistrationInfo() {
     let active = true
     setLoading(true)
     void api
-      .upcomingEvents()
+      .publishedEvents()
       .then((data) => {
         if (!active) return
         setEvents(data)
@@ -297,6 +292,8 @@ export function RegistrationInfo() {
 
   const raceDateRange = formatEventRaceDateRange(selectedEvent)
   const registrationEnds = formatRegistrationEnds(selectedEvent)
+  const registrationOpen = isRegistrationOpen(selectedEvent)
+  const hasPublishedEvent = Boolean(selectedEvent)
   const headlineEventTypes =
     eventTypeLabels.length > 0 ? eventTypeLabels.join(' · ') : selectedEvent ? formatSlug(String(selectedEvent.race_type ?? '').split(',')[0] || 'race') : '—'
 
@@ -423,10 +420,29 @@ export function RegistrationInfo() {
         <div className="pt-2">
           {loading ? <ShimmerBlock className="h-4 w-40" /> : null}
           {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+          {!loading && !error && !registrationOpen && getRegistrationClosesAtIso(selectedEvent) ? (
+            <div
+              className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+              role="status"
+            >
+              Registration has closed. The deadline was {registrationEnds}.
+            </div>
+          ) : null}
+          {!loading && !error && !hasPublishedEvent ? (
+            <div
+              className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+              role="status"
+            >
+              No events are open for registration right now.
+            </div>
+          ) : null}
           <Link
             to={session ? nextPath : `/auth?redirect=${encodeURIComponent(nextPath)}`}
+            aria-disabled={loading || !registrationOpen || !selectedEvent}
             className={`mt-3 inline-flex w-full items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold text-black transition ${
-              loading ? 'pointer-events-none bg-slate-200 text-slate-500' : 'bg-[#cfae3f] hover:bg-[#dab852]'
+              loading || !registrationOpen || !selectedEvent
+                ? 'pointer-events-none bg-slate-200 text-slate-500'
+                : 'bg-[#cfae3f] hover:bg-[#dab852]'
             }`}
           >
             Next

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../../services/api'
+import {
+  formatRegistrationClosesLabel,
+  isRegistrationOpen,
+} from '../../utils/registrationWindow'
 import { supabase } from '../../lib/supabase'
 import { saveRegistrationCheckoutPayload, registrationService, type RegistrationCheckoutLine } from '../../services/registrationService'
 import type { Event } from '../../types'
@@ -241,14 +245,34 @@ export function RegistrationForm() {
     void (async () => {
       if (!active) return
       setEventsLoading(true)
+      setError(null)
       try {
+        const queryEventId = params.get('eventId')
         const data = await api.upcomingEvents()
         if (!active) return
         setEvents(data)
-        const queryEventId = params.get('eventId')
         const matched = queryEventId ? data.find((item) => item.id === queryEventId) : null
         const fallback = data[0]?.id ?? ''
         setEventId(matched?.id ?? fallback)
+        if (!active) return
+        if (data.length === 0) {
+          if (queryEventId) {
+            const detail = await api.eventDetails(queryEventId)
+            if (detail?.status === 'published' && !isRegistrationOpen(detail)) {
+              setError(
+                detail.registration_deadline || detail.registration_closes_at
+                  ? `Registration closed on ${formatRegistrationClosesLabel(detail)}.`
+                  : 'Registration for this event is closed.',
+              )
+            } else if (!detail) {
+              setError('Event not found.')
+            } else {
+              setError('No events are open for registration right now.')
+            }
+          } else {
+            setError('No events are open for registration right now.')
+          }
+        }
       } catch (e) {
         if (!active) return
         setError((e as Error).message || 'Failed to load events.')
@@ -262,6 +286,8 @@ export function RegistrationForm() {
   }, [params])
 
   const selectedEvent = useMemo(() => events.find((item) => item.id === eventId) ?? null, [events, eventId])
+  const registrationOpen = isRegistrationOpen(selectedEvent)
+  const registrationClosedLabel = formatRegistrationClosesLabel(selectedEvent)
   const registrationFee = Number(selectedEvent?.registration_fee ?? 0)
 
   // ── Event Types ────────────────────────────────────────────────────────────
@@ -484,6 +510,9 @@ export function RegistrationForm() {
   const showFormSkeleton =
     eventsLoading || (!!selectedEvent?.id && (categoriesLoading || eventTypesLoading))
 
+  const registrationBlocked =
+    !eventsLoading && (events.length === 0 || !registrationOpen)
+
   const currentCategoryNames = useMemo(
     () => categoriesEligibleForRider.map((c) => c.category_name),
     [categoriesEligibleForRider],
@@ -537,6 +566,11 @@ export function RegistrationForm() {
     }
     if (!shirtSize) errors.shirtSize = 'Please select a shirt size.'
     if (!selectedEvent) errors.event = 'Please select an event.'
+    if (selectedEvent && !registrationOpen) {
+      errors.event = registrationClosedLabel
+        ? `Registration closed on ${registrationClosedLabel}.`
+        : 'Registration for this event is closed.'
+    }
     if (selectedEventTypeSlugs.length === 0) errors.eventTypes = 'Please select at least one event type.'
 
     if (Object.keys(errors).length > 0) {
@@ -670,6 +704,31 @@ export function RegistrationForm() {
 }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  if (!eventsLoading && registrationBlocked) {
+    return (
+      <section className="bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 lg:px-8">
+        <div className="mx-auto w-full max-w-[760px] space-y-5 sm:space-y-6">
+          <img src="/hna-banner-1.png" alt="Hari ng Ahon 2026 banner" className="w-full rounded-lg object-cover" />
+          <Link to="/register/info" className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900">
+            &larr; Back
+          </Link>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl md:text-4xl">Registration</h1>
+          </div>
+          <div
+            className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+            role="status"
+          >
+            {error ||
+              (registrationClosedLabel
+                ? `Registration has closed. The deadline was ${registrationClosedLabel}.`
+                : 'Registration is not open right now.')}
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   if (showFormSkeleton) {
     return (
       <section className="bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 lg:px-8">
@@ -720,6 +779,20 @@ export function RegistrationForm() {
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl md:text-4xl">Registration</h1>
           <p className="text-sm text-slate-600">Fill up the rider information and choose your category.</p>
         </div>
+
+        {!eventsLoading && !registrationOpen ? (
+          <div
+            className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+            role="status"
+          >
+            {registrationClosedLabel
+              ? `Registration has closed. The deadline was ${registrationClosedLabel}.`
+              : 'Registration is not open for this event.'}{' '}
+            <Link to="/register/info" className="font-semibold underline hover:text-rose-950">
+              Back to event info
+            </Link>
+          </div>
+        ) : null}
 
         {/* ── Event & Event Types Card ────────────────────────────────────── */}
         <div className={`${cardClass} space-y-4`}>
@@ -1206,7 +1279,7 @@ export function RegistrationForm() {
           <button
             type="button"
             onClick={() => void onSubmit()}
-            disabled={submitting}
+            disabled={submitting || !registrationOpen || !selectedEvent}
             className="inline-flex w-full items-center justify-center rounded-md bg-[#cfae3f] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-[#dab852] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? 'Saving…' : 'Proceed to Checkout'}
